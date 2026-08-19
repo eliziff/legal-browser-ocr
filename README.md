@@ -1,16 +1,18 @@
-# Legal OCR Browser
+# Legal Browser OCR
 
 Fast legal OCR that runs entirely in the browser.
 
-Legal OCR Browser reads PNGs and PDFs locally with WebAssembly and ONNX
+Legal Browser OCR reads PNGs and PDFs locally with WebAssembly and ONNX
 Runtime Web. Files, page images, and recognized text never need to leave the
 device. It includes interactive crop selection, whole-document recognition,
-four speed/accuracy profiles, and a self-contained HTML release.
+four speed/accuracy profiles, and a self-contained HTML release. It is the
+in-browser companion to [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser).
 
 ## Performance
 
 Measured in Chromium on a Core i3-1315U laptop using the same 153-page legal
-print benchmark as Legal PDF Parser. Lower character error rate (CER) is
+print benchmark as [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser).
+Lower character error rate (CER) is
 better.
 
 | Engine and profile | Browser throughput | CER | Gate |
@@ -28,7 +30,7 @@ workers and is not extrapolated from a single-worker measurement.
 
 ## Use
 
-Download `legal-ocr-browser.html` from the latest release and open it in a
+Download `legal-browser-ocr.html` from the latest release and open it in a
 current Chromium-based browser. For multithreaded WebAssembly, serve it with
 cross-origin isolation headers; it also runs single-threaded from a local file.
 

@@ -19,6 +19,6 @@ const assets = {
 const app = readFileSync(`${root}/dist/app.js`, 'utf8').replaceAll('</script', '<\\/script');
 const bootstrap = `<script>globalThis.LEGAL_OCR_ASSETS=${JSON.stringify(assets)}</script><script type="module">${app}</script>`;
 const html = readFileSync(`${root}/index.html`, 'utf8').replace('<script type="module" src="./dist/app.js"></script>', () => bootstrap);
-const output = `${root}/dist/legal-ocr-browser.html`;
+const output = `${root}/dist/legal-browser-ocr.html`;
 writeFileSync(output, html);
 process.stdout.write(`${output}\n`);
