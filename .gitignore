@@ -1,0 +1,7 @@
+/assets/
+/dist/
+/node_modules/
+*.log
+benchmark-*.json
+runtime/
+models/
