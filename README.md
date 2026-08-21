@@ -15,7 +15,7 @@ print benchmark as [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parse
 Lower character error rate (CER) is better.
 
 | Engine and profile | Throughput | CER |
-| --- | ---: | ---: | ---: |
+| --- | ---: | ---: |
 | Legal OCR — Quality | 1.55 pages/s | 2.58% |
 | Legal OCR — Turbo | 1.79 pages/s | 3.16% |
 | Tesseract.js — Fast, 4 workers | 1.01 pages/s | 4.11% |
