@@ -14,12 +14,12 @@ Measured in Chromium on a Core i3-1315U laptop using the same 153-page legal
 print benchmark as [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser).
 Lower character error rate (CER) is better.
 
-| Engine and profile | Throughput | CER | Pages |
+| Engine and profile | Throughput | CER |
 | --- | ---: | ---: | ---: |
-| Legal OCR — Quality | 1.55 pages/s | 2.58% | 153 |
-| Legal OCR — Turbo | 1.79 pages/s | 3.16% | 153 |
-| Tesseract.js — Fast, 4 workers | 1.01 pages/s | 4.11% | 153 |
-| Tesseract.js — Quality, 4 workers | 0.73 pages/s | 4.16% | 153 |
+| Legal OCR — Quality | 1.55 pages/s | 2.58% |
+| Legal OCR — Turbo | 1.79 pages/s | 3.16% |
+| Tesseract.js — Fast, 4 workers | 1.01 pages/s | 4.11% |
+| Tesseract.js — Quality, 4 workers | 0.73 pages/s | 4.16% |
 
 Each row is a warmed, sustained pass over the same 153 pages. The figures
 include line finding, recognition, and text assembly.
