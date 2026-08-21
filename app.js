@@ -56,7 +56,7 @@ const $ = id => document.getElementById(id);
 const pageCanvas = $('page'), overlay = $('overlay'), status = $('status'), text = $('text');
 if (experimental.has('seg')) $('segmentation').value = experimental.get('seg');
 const context = pageCanvas.getContext('2d'), overlayContext = overlay.getContext('2d');
-let session, modelBytes, labels, pdf, imageBitmap, pageNumber = 1, crop, cropTemplate, dragStart;
+let session, modelBytes, labels, pdf, imageBitmap, crop, cropTemplate, dragStart;
 let sessionPromise;
 let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[],poolTaskId=0;
 let tensorScratch = new Float32Array(), lengthsScratch = new BigInt64Array();
@@ -86,7 +86,6 @@ const ready = (async () => {
   else await ensureMainSession();
   await poolReady;
   status.textContent = 'Model ready. Select a PNG or PDF.';
-  $('ocr').disabled = !$('file').files.length;
   $('all').disabled = !$('file').files.length;
 })();
 ready.catch(error => { status.textContent = `Model failed to load: ${error.message}`; });
@@ -138,8 +137,6 @@ async function renderPage(number) {
     w: cropTemplate.w * pageCanvas.width, h: cropTemplate.h * pageCanvas.height
   } : null;
   drawCrop();
-  $('page-label').textContent = `Page ${number}${pdf ? ` of ${pdf.numPages}` : ''}`;
-  $('prev').disabled = number <= 1; $('next').disabled = !pdf || number >= pdf.numPages;
 }
 
 function point(event) {
@@ -157,13 +154,11 @@ overlay.addEventListener('pointerup',()=>{dragStart=null;if(crop&&(crop.w<8||cro
 $('clear').onclick=()=>{crop=cropTemplate=null;drawCrop()};
 
 $('file').onchange = async () => {
-  const file=$('file').files[0]; if(!file)return;$('ocr').disabled=true;$('all').disabled=true;status.textContent='Loading page…';await ready; pageNumber=1; pdf=null; imageBitmap=null; crop=cropTemplate=null;
+  const file=$('file').files[0]; if(!file)return;$('all').disabled=true;status.textContent='Loading page…';await ready; pdf=null; imageBitmap=null; crop=cropTemplate=null;
   if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf')) pdf=await getDocument({data:await file.arrayBuffer()}).promise;
   else imageBitmap=await createImageBitmap(file);
-  await renderPage(1); $('ocr').disabled=false; $('all').disabled=false; text.textContent='Drag a crop or recognize the whole page.';status.textContent='Page ready.';
+  await renderPage(1); $('all').disabled=false; text.textContent='Drag a crop or recognize the document.';status.textContent='Page 1 ready.';
 };
-$('prev').onclick=async()=>{if(pageNumber>1)await renderPage(--pageNumber)};
-$('next').onclick=async()=>{if(pdf&&pageNumber<pdf.numPages)await renderPage(++pageNumber)};
 
 function sourceCanvas() {
   if(!crop)return pageCanvas; const canvas=document.createElement('canvas');canvas.width=Math.round(crop.w);canvas.height=Math.round(crop.h);
@@ -291,7 +286,7 @@ async function segment(canvas) {
 }
 
 async function recognize(canvas, timing) {
-  await ready;const mode=scaleOverride||document.querySelector('[name="mode"]:checked').value;
+  await ready;const mode=scaleOverride||$('mode').value;
   if(workerPoolSize&&$('segmentation').value==='tesseract'){const layoutStarted=performance.now(),{lines}=await segment(canvas);if(timing)timing.layout_seconds=(performance.now()-layoutStarted)/1000;const boxes=lines.map(({x,y,width,height})=>({x,y,width,height})),inferenceStarted=performance.now(),value=await recognizeInPool(await createImageBitmap(canvas),boxes,Number(mode));if(timing)timing.inference_seconds=(performance.now()-inferenceStarted)/1000;return value}
   const {lines,seconds}=await segment(canvas);
   if(timing)timing.layout_seconds=seconds;
@@ -308,13 +303,13 @@ async function preparePages(canvases) {
 }
 
 async function recognizePreparedPages(prepared) {
-  const started=performance.now(),results=await infer(prepared.lines,scaleOverride||Number(document.querySelector('[name="mode"]:checked').value));
+  const started=performance.now(),results=await infer(prepared.lines,scaleOverride||Number($('mode').value));
   const confidences=results.map(result=>result.confidence).filter(Number.isFinite).sort((a,b)=>a-b);
   return {inference_seconds:(performance.now()-started)/1000,retried:results.filter(result=>result.retried).length,confidence_median:confidences[Math.floor(confidences.length/2)],pages:prepared.segments.map(({offset,count})=>({line_count:count,text:cleanModelText(results.slice(offset,offset+count).map(item=>item.text).join('\n'))}))};
 }
 
 window.krakenLiteLineCanvases=()=>{const source=sourceCanvas();return withoutRunningHeader(lineCanvases(source),source)};
-window.krakenLiteRecognizeLines=async lines=>cleanModelText((await infer(lines,scaleOverride||Number(document.querySelector('[name="mode"]:checked').value))).map(item=>item.text).join('\n'));
+window.krakenLiteRecognizeLines=async lines=>cleanModelText((await infer(lines,scaleOverride||Number($('mode').value))).map(item=>item.text).join('\n'));
 window.krakenLiteRecognizePage=async()=>{const started=performance.now(),timing={},value=await recognize(sourceCanvas(),timing);return {seconds:(performance.now()-started)/1000,...timing,text:value}};
 window.krakenLitePreparePages=preparePages;
 window.krakenLiteRecognizePreparedPages=recognizePreparedPages;
@@ -322,19 +317,22 @@ window.krakenLiteSetTuning=value=>{if(value.batch)batchSize=value.batch;if(value
 window.krakenLiteRecognizePages=async canvases=>{const started=performance.now(),prepared=await preparePages(canvases),recognized=await recognizePreparedPages(prepared);return {seconds:(performance.now()-started)/1000,layout_seconds:prepared.layout_seconds,...recognized}};
 window.krakenLiteRecognizePagesPooled=async canvases=>{
   await ready;await poolReady;if(!workerPoolSize)throw new Error('Set ?pool=N to enable the recognition worker pool');
-  const started=performance.now(),scale=scaleOverride||Number(document.querySelector('[name="mode"]:checked').value),counts=[];let layoutsDone=0,layout_wall_seconds=0;
+  const started=performance.now(),scale=scaleOverride||Number($('mode').value),counts=[];let layoutsDone=0,layout_wall_seconds=0;
   const tasks=canvases.map(async(canvas,index)=>{const {lines}=await segment(canvas);if(++layoutsDone===canvases.length)layout_wall_seconds=(performance.now()-started)/1000;counts[index]=lines.length;const boxes=lines.map(({x,y,width,height})=>({x,y,width,height}));return recognizeInPool(await createImageBitmap(canvas),boxes,scale)});
   const values=await Promise.all(tasks);return {seconds:(performance.now()-started)/1000,layout_wall_seconds,pages:values.map((text,index)=>({line_count:counts[index],text}))};
 };
 
-$('form').onsubmit=async event=>{event.preventDefault();const start=performance.now();text.textContent='';text.textContent=await recognize(sourceCanvas());status.textContent=`Done in ${((performance.now()-start)/1000).toFixed(2)} seconds · browser inference`;};
-async function documentCanvas(number){
-  if(!pdf)return sourceCanvas();const page=await pdf.getPage(number),viewport=page.getViewport({scale:2}),canvas=document.createElement('canvas');canvas.width=Math.round(viewport.width);canvas.height=Math.round(viewport.height);await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+function cropDocumentCanvas(canvas){
   if(!cropTemplate)return canvas;const selected=document.createElement('canvas'),area={x:cropTemplate.x*canvas.width,y:cropTemplate.y*canvas.height,w:cropTemplate.w*canvas.width,h:cropTemplate.h*canvas.height};selected.width=Math.round(area.w);selected.height=Math.round(area.h);selected.getContext('2d').drawImage(canvas,area.x,area.y,area.w,area.h,0,0,selected.width,selected.height);return selected;
+}
+async function documentCanvas(number){
+  if(!pdf)return sourceCanvas();
+  if(number===1){const canvas=document.createElement('canvas');canvas.width=pageCanvas.width;canvas.height=pageCanvas.height;canvas.getContext('2d').drawImage(pageCanvas,0,0);return cropDocumentCanvas(canvas)}
+  const page=await pdf.getPage(number),viewport=page.getViewport({scale:2}),canvas=document.createElement('canvas');canvas.width=Math.round(viewport.width);canvas.height=Math.round(viewport.height);await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;return cropDocumentCanvas(canvas);
 }
 
 $('all').onclick=async()=>{
-  const target=$('document');target.textContent='';const count=pdf?.numPages||1,started=performance.now(),entries=Array.from({length:count},(_,index)=>{const pair=document.createElement('article');pair.className='pair';const img=document.createElement('img');img.alt=`Page ${index+1}`;const copy=document.createElement('div');copy.className='text';const pre=document.createElement('pre');pre.textContent='Waiting…';copy.append(pre);pair.append(img,copy);target.append(pair);return{img,pre}});let next=1,done=0;
-  const runner=async()=>{while(next<=count){const number=next++,canvas=await documentCanvas(number),entry=entries[number-1];entry.img.src=canvas.toDataURL('image/jpeg',.72);entry.pre.textContent='Recognizing…';try{entry.pre.textContent=await recognize(canvas)}catch(error){entry.pre.textContent=`OCR failed: ${error.message}`}done++;status.textContent=`Recognized ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;await new Promise(requestAnimationFrame)}};
-  await Promise.all(Array.from({length:Math.min(count,workerPoolSize||1)},runner));status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds`;
+  $('all').disabled=true;const target=$('document');target.textContent='';text.textContent='Waiting…';const count=pdf?.numPages||1,started=performance.now(),entries=[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{const pair=document.createElement('article');pair.className='pair';const img=document.createElement('img');img.alt=`Page ${index+2}`;const copy=document.createElement('div');copy.className='text';const pre=document.createElement('pre');pre.textContent='Waiting…';copy.append(pre);pair.append(img,copy);target.append(pair);return{img,pre}})];let next=1,done=0;
+  const runner=async()=>{while(next<=count){const number=next++,canvas=await documentCanvas(number),entry=entries[number-1];if(entry.img)entry.img.src=canvas.toDataURL('image/jpeg',.72);entry.pre.textContent='Recognizing…';try{entry.pre.textContent=await recognize(canvas)}catch(error){entry.pre.textContent=`OCR failed: ${error.message}`}done++;status.textContent=`Recognized ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;await new Promise(requestAnimationFrame)}};
+  try{await Promise.all(Array.from({length:Math.min(count,workerPoolSize||1)},runner));status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds`;}finally{$('all').disabled=false}
 };

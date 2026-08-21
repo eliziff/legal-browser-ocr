@@ -1,11 +1,12 @@
 {
   "name": "legal-browser-ocr",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "esbuild app.js --bundle --format=esm --minify --outfile=dist/app.js && esbuild recognition-worker.js --bundle --format=iife --minify --outfile=dist/recognition-worker.js && node -e \"const fs=require('node:fs');for(const name of ['ort-wasm-simd-threaded.mjs','ort-wasm-simd-threaded.wasm'])fs.copyFileSync('node_modules/onnxruntime-web/dist/'+name,'dist/'+name);fs.copyFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs','dist/pdf.worker.min.mjs')\"",
-    "bundle": "npm run build && node build-single-html.mjs",
+    "runtime": "npm run build && node build-runtime.mjs",
+    "bundle": "npm run runtime && node build-single-html.mjs",
     "test": "node --test *.test.mjs"
   },
   "dependencies": {

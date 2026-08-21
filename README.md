@@ -26,9 +26,12 @@ include line finding, recognition, and text assembly.
 
 ## Use
 
-Download `legal-browser-ocr.html` from the latest release and open it in a
-current Chromium-based browser. For multithreaded WebAssembly, serve it with
-cross-origin isolation headers; it also runs single-threaded from a local file.
+The latest release offers both:
+
+- `legal-browser-ocr-runtime.tar.gz`, the complete runtime for serving with
+  cross-origin isolation headers and multithreaded WebAssembly.
+- `legal-browser-ocr.html`, the self-contained, single-file version. It runs
+  single-threaded when opened directly from disk.
 
 ## Build
 
@@ -40,7 +43,8 @@ npm run build
 
 The Git repository contains source only. Model, codec, layout-runtime, build,
 and benchmark artifacts are intentionally untracked. To build the self-contained
-HTML, place the licensed runtime assets under `assets/` and run `npm run bundle`.
+HTML and runtime archive, place the licensed runtime assets under `assets/`
+and run `npm run bundle`. Both release formats are written under `dist/`.
 
 ## Credits
 
