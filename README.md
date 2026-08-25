@@ -26,7 +26,8 @@ include line finding, recognition, and text assembly.
 
 ## Use
 
-The latest release offers both:
+[Use Legal Browser OCR online](https://eliziff.github.io/legal-browser-ocr/), or
+download the latest release as either:
 
 - `legal-browser-ocr-runtime.tar.gz`, the complete runtime for serving with
   cross-origin isolation headers and multithreaded WebAssembly.

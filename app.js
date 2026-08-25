@@ -3,7 +3,7 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/build/pdf.mjs';
 import { TesseractLayout } from './tesseract-layout.js';
 import { orderLayoutLines } from './layout-order.js';
 import { preprocessLine } from './line-preprocess.js';
-import { recognitionWorkers } from './worker-policy.js';
+import { documentWorkers, recognitionWorkers } from './worker-policy.js';
 
 const embedded = globalThis.LEGAL_OCR_ASSETS;
 const experimental = new URLSearchParams(location.search);
@@ -334,5 +334,5 @@ async function documentCanvas(number){
 $('all').onclick=async()=>{
   $('all').disabled=true;const target=$('document');target.textContent='';text.textContent='Waiting…';const count=pdf?.numPages||1,started=performance.now(),entries=[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{const pair=document.createElement('article');pair.className='pair';const img=document.createElement('img');img.alt=`Page ${index+2}`;const copy=document.createElement('div');copy.className='text';const pre=document.createElement('pre');pre.textContent='Waiting…';copy.append(pre);pair.append(img,copy);target.append(pair);return{img,pre}})];let next=1,done=0;
   const runner=async()=>{while(next<=count){const number=next++,canvas=await documentCanvas(number),entry=entries[number-1];if(entry.img)entry.img.src=canvas.toDataURL('image/jpeg',.72);entry.pre.textContent='Recognizing…';try{entry.pre.textContent=await recognize(canvas)}catch(error){entry.pre.textContent=`OCR failed: ${error.message}`}done++;status.textContent=`Recognized ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;await new Promise(requestAnimationFrame)}};
-  try{await Promise.all(Array.from({length:Math.min(count,workerPoolSize||1)},runner));status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds`;}finally{$('all').disabled=false}
+  try{await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize,$('segmentation').value))},runner));status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds`;}finally{$('all').disabled=false}
 };
