@@ -4,6 +4,8 @@ import { TesseractLayout } from './tesseract-layout.js';
 import { orderLayoutLines } from './layout-order.js';
 import { preprocessLine } from './line-preprocess.js';
 import { documentWorkers, recognitionWorkers } from './worker-policy.js';
+import { cleanModelText, positionedLines, cropToPdfTransform } from './text-layer.js';
+import { createSearchablePdf } from './pdf-export.js';
 
 const embedded = globalThis.LEGAL_OCR_ASSETS;
 const experimental = new URLSearchParams(location.search);
@@ -58,6 +60,7 @@ if (experimental.has('seg')) $('segmentation').value = experimental.get('seg');
 const context = pageCanvas.getContext('2d'), overlayContext = overlay.getContext('2d');
 let session, modelBytes, labels, pdf, imageBitmap, crop, cropTemplate, dragStart;
 let sessionPromise;
+let loadedFile = null, ocrPages = null, busy = false, poolError = null;
 let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[],poolTaskId=0;
 let tensorScratch = new Float32Array(), lengthsScratch = new BigInt64Array();
 const fixedSessions = new Map();
@@ -86,7 +89,7 @@ const ready = (async () => {
   else await ensureMainSession();
   await poolReady;
   status.textContent = 'Model ready. Select a PNG or PDF.';
-  $('all').disabled = !$('file').files.length;
+  $('all').disabled = busy || !loadedFile;
 })();
 ready.catch(error => { status.textContent = `Model failed to load: ${error.message}`; });
 
@@ -110,14 +113,39 @@ async function initializeRecognitionPool(codec,model){
   const workerUrl=assetUrl('recognitionWorker','./dist/recognition-worker.js');
   const slots=await Promise.all(Array.from({length:workerPoolSize},()=>new Promise((resolve,reject)=>{
     const worker=new Worker(workerUrl),slot={worker,task:null};
-    worker.onmessage=({data})=>{if(data.type==='ready'){idleWorkers.push(slot);resolve(slot);pumpRecognitionPool();return}const task=slot.task;slot.task=null;if(data.type==='error'){if(task)task.reject(new Error(data.message));else reject(new Error(data.message));return}task.resolve(data.text);idleWorkers.push(slot);pumpRecognitionPool()};worker.onerror=event=>reject(new Error(event.message||`recognition worker failed at ${event.filename||'unknown source'}:${event.lineno||0}`));
+    worker.onmessage=({data})=>{
+      if(data.type==='ready'){idleWorkers.push(slot);resolve(slot);pumpRecognitionPool();return}
+      const task=slot.task;slot.task=null;
+      if(data.type==='error'){
+        if(!task){reject(new Error(data.message));return}
+        task.reject(new Error(data.message));
+      }else if(task)task.resolve(task.includeLines?data.lines:data.text);
+      idleWorkers.push(slot);pumpRecognitionPool();
+    };
+    worker.onerror=event=>{
+      poolError=new Error(`${event.message||'Recognition worker failed'}. Reload this app to retry.`);
+      reject(poolError);slot.task?.reject(poolError);slot.task=null;
+      idleWorkers=idleWorkers.filter(value=>value!==slot);
+      for(const task of poolQueue.splice(0)){task.bitmap.close();task.reject(poolError)}
+    };
     worker.postMessage({type:'init',runtimeMjs:runtimePaths.mjs,runtimeWasm:runtimePaths.wasm,model:model.slice(0),codec,batchSize,bucketSize,padding:inputPadding});
   })));
   return slots;
 }
 
-async function recognizeInPool(bitmap,lines,scale){
-  await poolReady;return new Promise((resolve,reject)=>{poolQueue.push({id:++poolTaskId,bitmap,lines,scale,resolve,reject});pumpRecognitionPool()});
+async function recognizeInPool(bitmap,lines,scale,includeLines=false){
+  try{await poolReady;if(poolError)throw poolError}catch(error){bitmap.close();throw error}
+  return new Promise((resolve,reject)=>{poolQueue.push({id:++poolTaskId,bitmap,lines,scale,includeLines,resolve,reject});pumpRecognitionPool()});
+}
+
+function setBusy(value) {
+  busy=value;
+  for(const id of ['file','segmentation','mode','clear'])$(id).disabled=value;
+  $('all').disabled=value||!loadedFile;
+  $('download').disabled=value||!ocrPages;
+}
+function invalidateOcr() {
+  ocrPages=null;$('download').disabled=true;
 }
 
 function setCanvasSize(width, height) {
@@ -141,23 +169,32 @@ async function renderPage(number) {
 
 function point(event) {
   const box = overlay.getBoundingClientRect();
-  return { x:(event.clientX-box.left)*overlay.width/box.width, y:(event.clientY-box.top)*overlay.height/box.height };
+  return { x:Math.max(0,Math.min(overlay.width,(event.clientX-box.left)*overlay.width/box.width)), y:Math.max(0,Math.min(overlay.height,(event.clientY-box.top)*overlay.height/box.height)) };
 }
 function drawCrop() {
   overlayContext.clearRect(0,0,overlay.width,overlay.height); if(!crop)return;
   overlayContext.fillStyle='rgb(180 35 24 / 18%)';overlayContext.strokeStyle='#b42318';overlayContext.lineWidth=3;
   overlayContext.fillRect(crop.x,crop.y,crop.w,crop.h);overlayContext.strokeRect(crop.x,crop.y,crop.w,crop.h);
 }
-overlay.addEventListener('pointerdown',e=>{dragStart=point(e);crop=null;overlay.setPointerCapture(e.pointerId)});
-overlay.addEventListener('pointermove',e=>{if(!dragStart)return;const p=point(e);crop={x:Math.min(p.x,dragStart.x),y:Math.min(p.y,dragStart.y),w:Math.abs(p.x-dragStart.x),h:Math.abs(p.y-dragStart.y)};drawCrop()});
-overlay.addEventListener('pointerup',()=>{dragStart=null;if(crop&&(crop.w<8||crop.h<8))crop=null;cropTemplate=crop?{x:crop.x/overlay.width,y:crop.y/overlay.height,w:crop.w/overlay.width,h:crop.h/overlay.height}:null;drawCrop();status.textContent=crop?'Crop selected for every page.':'Crop cleared.'});
-$('clear').onclick=()=>{crop=cropTemplate=null;drawCrop()};
+overlay.addEventListener('pointerdown',e=>{if(busy||!loadedFile)return;invalidateOcr();dragStart=point(e);crop=null;overlay.setPointerCapture(e.pointerId)});
+overlay.addEventListener('pointermove',e=>{if(busy||!dragStart)return;const p=point(e);crop={x:Math.min(p.x,dragStart.x),y:Math.min(p.y,dragStart.y),w:Math.abs(p.x-dragStart.x),h:Math.abs(p.y-dragStart.y)};drawCrop()});
+overlay.addEventListener('pointerup',()=>{if(busy||!dragStart)return;dragStart=null;if(crop&&(crop.w<8||crop.h<8))crop=null;cropTemplate=crop?{x:crop.x/overlay.width,y:crop.y/overlay.height,w:crop.w/overlay.width,h:crop.h/overlay.height}:null;drawCrop();status.textContent=crop?'Crop selected for every page.':'Crop cleared.'});
+$('clear').onclick=()=>{if(busy)return;invalidateOcr();crop=cropTemplate=null;drawCrop()};
 
 $('file').onchange = async () => {
-  const file=$('file').files[0]; if(!file)return;$('all').disabled=true;status.textContent='Loading page…';await ready; pdf=null; imageBitmap=null; crop=cropTemplate=null;
-  if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf')) pdf=await getDocument({data:await file.arrayBuffer()}).promise;
-  else imageBitmap=await createImageBitmap(file);
-  await renderPage(1); $('all').disabled=false; text.textContent='Drag a crop or recognize the document.';status.textContent='Page 1 ready.';
+  const file=$('file').files[0];if(!file||busy)return;
+  setBusy(true);invalidateOcr();loadedFile=null;crop=cropTemplate=dragStart=null;
+  $('document').textContent='';text.textContent='';setCanvasSize(1,1);status.textContent='Loading page…';
+  try{
+    if(pdf)await pdf.destroy();pdf=null;imageBitmap?.close();imageBitmap=null;
+    await ready;
+    // Keep the immutable File, not PDF.js's transferred/detached ArrayBuffer.
+    if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf'))pdf=await getDocument({data:await file.arrayBuffer()}).promise;
+    else imageBitmap=await createImageBitmap(file);
+    await renderPage(1);loadedFile=file;
+    text.textContent='Drag a crop or recognize the document.';status.textContent='Page 1 ready.';
+  }catch(error){status.textContent=`Could not load file: ${error.message}`}
+  finally{setBusy(false)}
 };
 
 function sourceCanvas() {
@@ -177,7 +214,7 @@ function projectionLines(source,pixels,dark,x0=0,y0=0,width=source.width,height=
   const ranges=(threshold,from=0,to=height)=>{const out=[];let start=-1;for(let y=from;y<=to;y++){if(y<to&&inkRows[y]>=threshold&&start<0)start=y;if((y===to||inkRows[y]<threshold)&&start>=0){if(y-start>=4)out.push([start,y]);start=-1}}return out};
   let bands=ranges(low),sizes=bands.map(([a,b])=>b-a).filter(n=>n<100).sort((a,b)=>a-b),typical=sizes[Math.floor(sizes.length/2)]||40;
   bands=bands.flatMap(([a,b])=>b-a>typical*1.65?ranges(high,a,b):[[a,b]]);
-  const lines=[];for(const [start,y] of bands){let left=width,right=0;for(let yy=Math.max(0,start-6);yy<Math.min(height,y+6);yy++)for(let x=0;x<width;x+=2){const i=((y0+yy)*sourceWidth+x0+x)*4;if((pixels[i]+pixels[i+1]+pixels[i+2])/3<dark){left=Math.min(left,x);right=Math.max(right,x)}}left=Math.max(0,left-12);right=Math.min(width,right+14);const c=document.createElement('canvas'),cropY=Math.max(0,start-6);c.width=Math.max(1,right-left);c.height=Math.min(height,y-start+12);c.dataset.y=y0+start;c.getContext('2d').drawImage(source,x0+left,y0+cropY,c.width,c.height,0,0,c.width,c.height);lines.push(c)}
+  const lines=[];for(const [start,y] of bands){let left=width,right=0;for(let yy=Math.max(0,start-6);yy<Math.min(height,y+6);yy++)for(let x=0;x<width;x+=2){const i=((y0+yy)*sourceWidth+x0+x)*4;if((pixels[i]+pixels[i+1]+pixels[i+2])/3<dark){left=Math.min(left,x);right=Math.max(right,x)}}const inkLeft=left,inkRight=right;left=Math.max(0,left-12);right=Math.min(width,right+14);const c=document.createElement('canvas'),cropY=Math.max(0,start-6);c.width=Math.max(1,right-left);c.height=Math.min(height,y-start+12);c.dataset.y=y0+start;c.x=x0+left;c.y=y0+cropY;c.ocrBox={x:x0+inkLeft,y:y0+start,width:Math.max(1,inkRight-inkLeft+2),height:y-start};c.getContext('2d').drawImage(source,x0+left,y0+cropY,c.width,c.height,0,0,c.width,c.height);lines.push(c)}
   return lines;
 }
 
@@ -204,14 +241,15 @@ async function tesseractLines(source) {
   let layoutSource=source;
   if(layoutScale!==1){layoutSource=document.createElement('canvas');layoutSource.width=Math.max(1,Math.round(source.width*layoutScale));layoutSource.height=Math.max(1,Math.round(source.height*layoutScale));layoutSource.getContext('2d').drawImage(source,0,0,layoutSource.width,layoutSource.height)}
   let boxes=await findLayoutLines(layoutSource);
-  if(layoutScale!==1)boxes=boxes.map(box=>({x0:box.x0/layoutScale,y0:box.y0/layoutScale,x1:box.x1/layoutScale,y1:box.y1/layoutScale}));
+  if(layoutScale!==1)boxes=boxes.map(box=>({x0:box.x0*source.width/layoutSource.width,y0:box.y0*source.height/layoutSource.height,x1:box.x1*source.width/layoutSource.width,y1:box.y1*source.height/layoutSource.height}));
   boxes = orderLayoutLines(boxes, source.width, source.height);
-  if(atlasBatch)return boxes.map(box=>({source,x:Math.max(0,box.x0-10),y:Math.max(0,box.y0-6),width:Math.max(1,Math.min(source.width,box.x1+11)-Math.max(0,box.x0-10)),height:Math.max(1,Math.min(source.height,box.y1+7)-Math.max(0,box.y0-6))}));
+  if(atlasBatch)return boxes.map(box=>({source,ocrBox:{x:box.x0,y:box.y0,width:box.x1-box.x0,height:box.y1-box.y0},x:Math.max(0,box.x0-10),y:Math.max(0,box.y0-6),width:Math.max(1,Math.min(source.width,box.x1+11)-Math.max(0,box.x0-10)),height:Math.max(1,Math.min(source.height,box.y1+7)-Math.max(0,box.y0-6))}));
   return boxes.map(box => {
     const x = Math.max(0, box.x0 - 10), y = Math.max(0, box.y0 - 6);
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.min(source.width, box.x1 + 11) - x);
     canvas.height = Math.max(1, Math.min(source.height, box.y1 + 7) - y);
+    canvas.x=x;canvas.y=y;canvas.ocrBox={x:box.x0,y:box.y0,width:box.x1-box.x0,height:box.y1-box.y0};
     canvas.getContext('2d').drawImage(source, x, y, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
     return canvas;
   });
@@ -255,10 +293,6 @@ function decodeIds(output,n,validSteps) {
   return {text:result};
 }
 
-function cleanModelText(value) {
-  return value.replace(/[\u00ad\u00ac]\r?\n/g,'').replace(/[\u00ad\u00ac]/g,'');
-}
-
 async function inferenceSession(width) {
   const fixed=fixedWidths.find(value=>value>=width);
   if(!fixed)return {runner:session,width};
@@ -285,15 +319,17 @@ async function segment(canvas) {
   return {lines,seconds:(performance.now()-started)/1000};
 }
 
-async function recognize(canvas, timing) {
-  await ready;const mode=scaleOverride||$('mode').value;
-  if(workerPoolSize&&$('segmentation').value==='tesseract'){const layoutStarted=performance.now(),{lines}=await segment(canvas);if(timing)timing.layout_seconds=(performance.now()-layoutStarted)/1000;const boxes=lines.map(({x,y,width,height})=>({x,y,width,height})),inferenceStarted=performance.now(),value=await recognizeInPool(await createImageBitmap(canvas),boxes,Number(mode));if(timing)timing.inference_seconds=(performance.now()-inferenceStarted)/1000;return value}
+async function recognize(canvas, timing, withLayout=false) {
+  await ready;const mode=Number(scaleOverride||$('mode').value);
   const {lines,seconds}=await segment(canvas);
   if(timing)timing.layout_seconds=seconds;
   const inferenceStarted=performance.now();
-  const results=await infer(lines,Number(mode));
+  const texts=workerPoolSize&&$('segmentation').value==='tesseract'
+    ?await recognizeInPool(await createImageBitmap(canvas),lines.map(({x,y,width,height})=>({x,y,width,height})),mode,true)
+    :(await infer(lines,mode)).map(item=>item.text);
   if(timing)timing.inference_seconds=(performance.now()-inferenceStarted)/1000;
-  return cleanModelText(results.map(item=>item.text).join('\n'));
+  const value=cleanModelText(texts.join('\n'));
+  return withLayout?{text:value,lines:positionedLines(lines,texts)}:value;
 }
 
 async function preparePages(canvases) {
@@ -323,16 +359,75 @@ window.krakenLiteRecognizePagesPooled=async canvases=>{
 };
 
 function cropDocumentCanvas(canvas){
-  if(!cropTemplate)return canvas;const selected=document.createElement('canvas'),area={x:cropTemplate.x*canvas.width,y:cropTemplate.y*canvas.height,w:cropTemplate.w*canvas.width,h:cropTemplate.h*canvas.height};selected.width=Math.round(area.w);selected.height=Math.round(area.h);selected.getContext('2d').drawImage(canvas,area.x,area.y,area.w,area.h,0,0,selected.width,selected.height);return selected;
+  if(!cropTemplate)return {canvas,area:null};
+  const selected=document.createElement('canvas'),area={x:cropTemplate.x*canvas.width,y:cropTemplate.y*canvas.height,w:cropTemplate.w*canvas.width,h:cropTemplate.h*canvas.height};
+  selected.width=Math.max(1,Math.round(area.w));selected.height=Math.max(1,Math.round(area.h));
+  selected.getContext('2d').drawImage(canvas,area.x,area.y,area.w,area.h,0,0,selected.width,selected.height);
+  return {canvas:selected,area};
 }
 async function documentCanvas(number){
-  if(!pdf)return sourceCanvas();
-  if(number===1){const canvas=document.createElement('canvas');canvas.width=pageCanvas.width;canvas.height=pageCanvas.height;canvas.getContext('2d').drawImage(pageCanvas,0,0);return cropDocumentCanvas(canvas)}
-  const page=await pdf.getPage(number),viewport=page.getViewport({scale:2}),canvas=document.createElement('canvas');canvas.width=Math.round(viewport.width);canvas.height=Math.round(viewport.height);await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;return cropDocumentCanvas(canvas);
+  const canvas=document.createElement('canvas');
+  let transform=[1,0,0,-1,0,pageCanvas.height]; // PNG: one source pixel per PDF point.
+  if(pdf){
+    const page=await pdf.getPage(number),viewport=page.getViewport({scale:2});
+    transform=viewport.transform;canvas.width=Math.round(viewport.width);canvas.height=Math.round(viewport.height);
+    if(number===1)canvas.getContext('2d').drawImage(pageCanvas,0,0);
+    else await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+  }else{
+    canvas.width=pageCanvas.width;canvas.height=pageCanvas.height;canvas.getContext('2d').drawImage(pageCanvas,0,0);
+  }
+  const selected=cropDocumentCanvas(canvas);
+  if(selected.canvas!==canvas)canvas.width=canvas.height=1;
+  return {canvas:selected.canvas,transform:cropToPdfTransform(transform,selected.area,selected.canvas.width,selected.canvas.height)};
 }
 
 $('all').onclick=async()=>{
-  $('all').disabled=true;const target=$('document');target.textContent='';text.textContent='Waiting…';const count=pdf?.numPages||1,started=performance.now(),entries=[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{const pair=document.createElement('article');pair.className='pair';const img=document.createElement('img');img.alt=`Page ${index+2}`;const copy=document.createElement('div');copy.className='text';const pre=document.createElement('pre');pre.textContent='Waiting…';copy.append(pre);pair.append(img,copy);target.append(pair);return{img,pre}})];let next=1,done=0;
-  const runner=async()=>{while(next<=count){const number=next++,canvas=await documentCanvas(number),entry=entries[number-1];if(entry.img)entry.img.src=canvas.toDataURL('image/jpeg',.72);entry.pre.textContent='Recognizing…';try{entry.pre.textContent=await recognize(canvas)}catch(error){entry.pre.textContent=`OCR failed: ${error.message}`}done++;status.textContent=`Recognized ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;await new Promise(requestAnimationFrame)}};
-  try{await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize,$('segmentation').value))},runner));status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds`;}finally{$('all').disabled=false}
+  if(busy||!loadedFile)return;
+  setBusy(true);invalidateOcr();
+  const target=$('document');target.textContent='';text.textContent='Waiting…';
+  const count=pdf?.numPages||1,started=performance.now(),results=new Array(count);
+  const entries=[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{
+    const pair=document.createElement('article');pair.className='pair';
+    const img=document.createElement('img');img.alt=`Page ${index+2}`;
+    const copy=document.createElement('div');copy.className='text';
+    const pre=document.createElement('pre');pre.textContent='Waiting…';
+    copy.append(pre);pair.append(img,copy);target.append(pair);return{img,pre};
+  })];
+  let next=1,done=0,failed=0;
+  const runner=async()=>{
+    while(next<=count){
+      const number=next++,entry=entries[number-1];let canvas;
+      try{
+        const page=await documentCanvas(number);canvas=page.canvas;
+        if(entry.img)entry.img.src=canvas.toDataURL('image/jpeg',.72);
+        entry.pre.textContent='Recognizing…';
+        const result=await recognize(canvas,undefined,true);
+        entry.pre.textContent=result.text;
+        results[number-1]={lines:result.lines,transform:page.transform};
+      }catch(error){failed++;entry.pre.textContent=`OCR failed: ${error.message}`}
+      finally{if(canvas)canvas.width=canvas.height=1}
+      done++;status.textContent=`Processed ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;
+      await new Promise(requestAnimationFrame);
+    }
+  };
+  try{
+    await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize,$('segmentation').value))},runner));
+    if(failed)status.textContent=poolError?.message||`OCR failed on ${failed} of ${count} pages. Retry recognition before downloading a PDF.`;
+    else{ocrPages=results;status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds. Searchable PDF ready to download.`}
+  }catch(error){status.textContent=`OCR failed: ${error.message}`}
+  finally{setBusy(false)}
+};
+
+$('download').onclick=async()=>{
+  if(busy||!loadedFile||!ocrPages)return;
+  setBusy(true);status.textContent='Adding the text layer to the original pages…';
+  try{
+    const bytes=await loadedFile.arrayBuffer();
+    const output=await createSearchablePdf({...(pdf?{pdfBytes:bytes}:{pngBytes:bytes}),pages:ocrPages});
+    const url=URL.createObjectURL(new Blob([output],{type:'application/pdf'}));
+    const link=document.createElement('a');link.href=url;link.download=loadedFile.name.replace(/\.[^.]+$/,'')+'-searchable.pdf';
+    document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+    status.textContent='Searchable PDF downloaded. Original page appearance preserved.';
+  }catch(error){status.textContent=`PDF export failed: ${error.message}`}
+  finally{setBusy(false)}
 };
