@@ -1,4 +1,5 @@
 import * as ort from 'onnxruntime-web/wasm';
+import { cleanModelText } from './text-layer.js';
 
 let session, labels, batchSize, bucketSize, padding;
 const height=48,canvas=new OffscreenCanvas(1,1),context=canvas.getContext('2d',{willReadFrequently:true});
@@ -23,7 +24,7 @@ async function recognize(bitmap,lines,scale){
     const out=await session.run({image:new ort.Tensor('float32',tensor,[batch.length,1,height,max]),sequence_lengths:new ort.Tensor('int64',lengths,[batch.length])}),output=out.logits||Object.values(out)[0],valid=out.output_lengths;
     batch.forEach((item,n)=>{results[item.index]=decode(output,n,valid?Number(valid.data[n]):output.dims.at(-1))});
   }
-  bitmap.close();return results.join('\n').replace(/[\u00ad\u00ac]\r?\n/g,'').replace(/[\u00ad\u00ac]/g,'');
+  return results;
 }
 
 self.onmessage=async({data})=>{
@@ -33,6 +34,8 @@ self.onmessage=async({data})=>{
       labels=Object.fromEntries(Object.entries(data.codec).flatMap(([character,ids])=>ids.map(id=>[id,character])));batchSize=data.batchSize;bucketSize=data.bucketSize;padding=data.padding;
       session=await ort.InferenceSession.create(data.model,{executionProviders:['wasm'],graphOptimizationLevel:'all'});self.postMessage({type:'ready'});return;
     }
-    self.postMessage({type:'result',id:data.id,text:await recognize(data.bitmap,data.lines,data.scale)});
+    const lines=await recognize(data.bitmap,data.lines,data.scale);
+    self.postMessage({type:'result',id:data.id,text:cleanModelText(lines.join('\n')),lines});
   }catch(error){self.postMessage({type:'error',id:data.id,message:error.message,stack:error.stack})}
+  finally{data.bitmap?.close()}
 };

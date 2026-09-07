@@ -34,6 +34,23 @@ download the latest release as either:
 - `legal-browser-ocr.html`, the self-contained, single-file version. It runs
   single-threaded when opened directly from disk.
 
+After loading a file, select an optional crop and click **Recognize document**.
+When every page succeeds, click **Download searchable PDF**. The download adds
+an invisible, selectable/searchable text layer to the **original PDF pages**;
+it does not replace them with screenshots. PNG input is embedded unchanged on
+a new PDF page. Processing and export stay local, including in the single HTML.
+
+Crops limit recognition, not the exported page. Rotations and PDF crop-box
+offsets are retained. Text is fitted to detected line bounds, with approximate
+character spacing; this is not a word-accurate alignment or OCR correction tool.
+Export is enabled only after all pages succeed, and changing the file or crop
+invalidates the previous result. Every export starts from the original input,
+so re-running recognition does not accumulate extra layers.
+
+This is additive OCR for scans: existing PDF text is preserved, not removed.
+Already-searchable inputs can therefore have duplicate extracted text. Review
+recognized text before relying on it.
+
 ## Build
 
 ```powershell
@@ -54,7 +71,9 @@ The recognition model is a legal-domain fine-tune of
 [Kraken](https://kraken.re/) OCR ecosystem and the work of the
 [CATMuS project](https://huggingface.co/CATMuS). The browser runtime uses
 [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) and
-[PDF.js](https://mozilla.github.io/pdf.js/).
+[PDF.js](https://mozilla.github.io/pdf.js/). Searchable PDF export uses
+[pdf-lib](https://pdf-lib.js.org/), with self-contained, glyphless Type 3 fonts
+and Unicode maps; no extra font assets or network requests are required.
 
 ## License
 
