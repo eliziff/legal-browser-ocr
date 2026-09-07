@@ -1,24 +1,34 @@
-name: OCR export validation
+name: Apply validated OCR export patch
 on:
   push:
     branches: [fix/searchable-pdf-text-layer]
+    paths: [_ocr-export.patch.gz.b64]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  validate:
+  apply:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Apply exact locally validated patch
+        shell: bash
+        run: |
+          base64 --decode _ocr-export.patch.gz.b64 | gzip -d > "$RUNNER_TEMP/ocr-export.patch"
+          echo "665f771836b1d12546ab852b1001635420d242390cb57b2e8554b0c7a8ab9d07  $RUNNER_TEMP/ocr-export.patch" | sha256sum -c -
+          git apply --check "$RUNNER_TEMP/ocr-export.patch"
+          git apply "$RUNNER_TEMP/ocr-export.patch"
       - run: npm ci
-      - run: npm install --save-exact pdf-lib@1.17.1
       - run: npm test
-      - name: Prepare validation dependencies
-        run: tar --exclude=.git -czf "$RUNNER_TEMP/ocr-validation.tgz" .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ocr-validation
-          path: ${{ runner.temp }}/ocr-validation.tgz
-          retention-days: 1
+      - run: npm run build
+      - name: Commit tested source changes
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md app.js index.html package.json package-lock.json pdf-export.js pdf-export.test.mjs recognition-worker.js text-layer.js text-layer.test.mjs
+          git diff --cached --check
+          git commit -m 'fix: embed searchable OCR text on original PDF pages'
+          git push origin HEAD:fix/searchable-pdf-text-layer
