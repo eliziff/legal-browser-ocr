@@ -2,9 +2,9 @@ export function structureInput(pages) {
   let text = '', offset = 0;
   const lines = [];
   pages.forEach((page, index) => {
-    for (const line of page.lines) {
+    for (const [lineIndex, line] of page.lines.entries()) {
       const length = line.text.length; // The shared engine publishes UTF-16 offsets.
-      lines.push({ start: offset, end: offset + length, page: index + 1, line, transform: page.transform });
+      lines.push({ id: `p${index + 1}-l${lineIndex + 1}`, start: offset, end: offset + length, page: index + 1, line, transform: page.transform });
       text += line.text + '\n'; offset += length + 1;
     }
     text += '\n'; offset++;
@@ -18,9 +18,12 @@ export function structureInput(pages) {
 
 export function outlineEntries(nodes, lines) {
   const byId = new Map(nodes.map(node => [node.id, node]));
+  const byLineId = new Map(lines.map(line => [line.id, line]));
+  const headings = nodes.filter(node => node.kind === 'heading');
+  const candidates = headings.length ? headings : nodes.filter(node => node.kind === 'section');
   const seen = new Set();
-  return nodes.filter(node => ['heading', 'section'].includes(node.kind) && !seen.has(node.range.start) && seen.add(node.range.start)).flatMap(node => {
-    const hit = lines.find(line => line.start <= node.range.start && node.range.start < line.end);
+  return candidates.filter(node => !seen.has(node.range.start) && seen.add(node.range.start)).flatMap(node => {
+    const hit = byLineId.get(node.line_ids?.[0]) || lines.find(line => line.start <= node.range.start && node.range.start < line.end);
     if (!hit) return [];
     const [a,b,c,d,e,f] = hit.transform, { x,y } = hit.line;
     let depth = 0, parent = node.parent_id;
@@ -31,7 +34,7 @@ export function outlineEntries(nodes, lines) {
       if (['heading','section'].includes(ancestor.kind)) depth++;
       parent = ancestor.parent_id;
     }
-    return [{ id: node.id, title: hit.line.text, page: hit.page, depth,
+    return [{ id: node.id, title: node.label || hit.line.text, page: hit.page, depth,
       point: [a*x+c*y+e, b*x+d*y+f] }];
   }).sort((a,b) => a.page-b.page);
 }

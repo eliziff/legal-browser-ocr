@@ -10,18 +10,18 @@ const style = document.createElement('style');
 style.textContent = pdfStyles + styles; document.head.append(style);
 document.body.classList.add('structure-app');
 const panel = document.createElement('section'); panel.id = 'structure-reader';
-panel.innerHTML = `<nav class="recent-pdfs" aria-label="Recent PDFs"></nav>
-<button type="button" id="open-history" class="secondary compact">History</button>
+panel.innerHTML = `<div class="reader-tabs"><nav class="recent-pdfs" aria-label="Open PDFs"></nav>
+<button type="button" id="open-history" class="secondary compact">History</button></div>
 <p id="structure-status" role="status">Processed PDFs will appear here and be remembered in this browser.</p>
 <p id="storage-status" role="status"></p>
 <div class="reader-body" hidden>
   <aside class="contents" id="contents-dock"><h2>Contents</h2><nav aria-label="Document contents"></nav></aside>
   <div class="reader-main"><div class="reader-toolbar">
-    <button type="button" id="toggle-contents" class="secondary" aria-controls="contents-dock" aria-expanded="true">Hide contents</button>
+    <button type="button" id="toggle-contents" class="secondary" aria-controls="contents-dock" aria-expanded="true">Contents</button>
+    <span class="toolbar-separator" aria-hidden="true"></span>
     <label>Page <input id="reader-page" type="number" min="1" value="1" aria-label="Page number"> <span id="reader-total"></span></label>
     <label>Zoom <select id="reader-zoom"><option value="page-width">Fit width</option><option value="page-fit">Fit page</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
     <button type="button" id="reader-fullscreen" class="secondary">Full screen</button>
-    <button type="button" id="forget-pdf" class="secondary">Remove from recents</button>
   </div><div class="reader-viewport"><div class="reader-scroll" tabindex="0" aria-label="PDF pages"><div class="pdfViewer"></div></div></div></div>
 </div>`;
 panel.insertAdjacentHTML('beforeend', `<dialog id="history-dialog"><form method="dialog"><header><h2>Recent PDFs</h2><button value="close" class="secondary compact">Close</button></header><div class="history-list"></div></form></dialog>
@@ -58,16 +58,18 @@ function controls() {
   button.disabled = opening || Boolean(worker) || !active?.ocrPages;
   profile.disabled = opening || Boolean(worker);
   download.disabled = opening || !active;
-  $('#forget-pdf').disabled = opening || Boolean(worker) || !active;
 }
 function drawTabs() {
   tabs.replaceChildren();
   for (const record of records) {
-    const tab = document.createElement('button'); tab.type = 'button'; tab.className = 'recent-pdf';
+    const item = document.createElement('span'), tab = document.createElement('button'), close = document.createElement('button');
+    item.className = 'recent-tab'; tab.type = close.type = 'button'; tab.className = 'recent-pdf';
     tab.textContent = record.name; tab.title = record.name;
-    if (record === active) tab.setAttribute('aria-current', 'page');
+    close.className = 'close-tab'; close.textContent = '×'; close.setAttribute('aria-label', `Remove ${record.name} from recents`);
+    close.onclick = () => confirmRemoval(record);
+    if (record === active) { tab.setAttribute('aria-current', 'page'); item.classList.add('active'); }
     tab.onclick = () => { if (record !== active) void openRecord(record); };
-    tabs.append(tab);
+    item.append(tab, close); tabs.append(item);
   }
 }
 function drawHistory() {
@@ -118,8 +120,8 @@ zoom.onchange = () => { viewer.currentScaleValue = zoom.value; };
 $('#open-history').onclick = () => { drawHistory(); historyDialog.showModal(); };
 dockButton.onclick = () => {
   const collapsed = body.classList.toggle('dock-collapsed');
-  dockButton.textContent = collapsed ? 'Show contents' : 'Hide contents';
   dockButton.setAttribute('aria-expanded', String(!collapsed));
+  dockButton.classList.toggle('active', !collapsed);
   requestAnimationFrame(() => { if (viewer.pdfDocument) viewer.currentScaleValue = zoom.value; });
 };
 fullscreenButton.onclick = () => document.fullscreenElement ? document.exitFullscreen() : panel.requestFullscreen();
@@ -212,9 +214,7 @@ download.onclick = () => {
   link.href = url; link.download = active.name.replace(/\.[^.]+$/, '') + '-searchable.pdf';
   link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 };
-$('#forget-pdf').onclick = async () => {
-  if (active) confirmRemoval(active);
-};
+dockButton.classList.add('active');
 controls();
 try {
   const [saved, id] = await Promise.all([recentDocuments(), activeDocument()]);

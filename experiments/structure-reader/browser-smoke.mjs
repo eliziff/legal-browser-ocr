@@ -48,6 +48,12 @@ try {
   await page.waitForFunction(()=>!document.fullscreenElement);
   await page.locator('#structure-reader').scrollIntoViewIfNeeded();
   await page.screenshot({path:'dist/structure-smoke/reader-desktop.png'});
+  const selectionLayer = await page.locator('.pdfViewer .page[data-page-number="1"] .textLayer').evaluate(layer => ({
+    glyphZ: getComputedStyle(layer.querySelector('span')).zIndex,
+    endPointer: getComputedStyle(layer.querySelector('.endOfContent')).pointerEvents,
+  }));
+  assert.equal(selectionLayer.glyphZ,'1');
+  assert.notEqual(selectionLayer.endPointer,'none');
   for(let repeat=0;repeat<2;repeat++) {
     await page.evaluate(()=>getSelection().removeAllRanges());
     const spans=await page.locator('.pdfViewer .page[data-page-number="1"] .textLayer span').evaluateAll(spans=>spans.filter(s=>s.textContent.trim()).map(s=>{const r=s.getBoundingClientRect();return {text:s.textContent,x:r.x,y:r.y,w:r.width,h:r.height}}));
@@ -63,6 +69,7 @@ try {
     assert.ok(selected.includes('good faith'),selected);
     assert.ok(!selected.includes('Payment'),selected);
     assert.equal(lengths.filter((length,i)=>i&&length<lengths[i-1]).length,0,JSON.stringify(lengths));
+    assert.ok(Math.max(...lengths)<=selected.length,JSON.stringify(lengths));
     console.log('SELECTION',repeat,selected.length,'characters; no backwards jumps');
   }
   await page.screenshot({path:'dist/structure-smoke/reader-selection.png'});
@@ -107,14 +114,14 @@ try {
   await page.locator('#clear').click();
   assert.equal(await page.locator('.reader-body').isVisible(),true);
   assert.equal(await page.locator('#detect-structure').isDisabled(),false);
-  await page.locator('#forget-pdf').click();
+  await page.locator('.recent-tab.active .close-tab').click();
   assert.equal(await page.locator('#remove-dialog').isVisible(),true);
   await page.locator('#remove-dialog button[value="cancel"]').click();
   assert.equal(await page.locator('.recent-pdf').count(),2);
-  await page.locator('#forget-pdf').click();
+  await page.locator('.recent-tab.active .close-tab').click();
   await page.locator('#remove-dialog button[value="confirm"]').click();
   await page.waitForFunction(()=>document.querySelector('#reader-total').textContent==='of 40');
-  await page.locator('#forget-pdf').click();
+  await page.locator('.recent-tab.active .close-tab').click();
   await page.locator('#remove-dialog button[value="confirm"]').click();
   await page.waitForFunction(()=>document.querySelector('.reader-body').hidden);
   await page.reload();await page.waitForSelector('#structure-reader');
