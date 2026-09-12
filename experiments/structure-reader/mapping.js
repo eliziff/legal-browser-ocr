@@ -1,0 +1,32 @@
+export function structureInput(pages) {
+  let text = '', offset = 0;
+  const lines = [];
+  pages.forEach((page, index) => {
+    for (const line of page.lines) {
+      const length = line.text.length; // The shared engine publishes UTF-16 offsets.
+      lines.push({ start: offset, end: offset + length, page: index + 1, line, transform: page.transform });
+      text += line.text + '\n'; offset += length + 1;
+    }
+    text += '\n'; offset++;
+  });
+  return { text, lines };
+}
+
+export function outlineEntries(nodes, lines) {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  return nodes.filter(node => ['heading', 'section'].includes(node.kind)).flatMap(node => {
+    const hit = lines.find(line => line.start <= node.range.start && node.range.start < line.end);
+    if (!hit) return [];
+    const [a,b,c,d,e,f] = hit.transform, { x,y } = hit.line;
+    let depth = 0, parent = node.parent_id;
+    const seen = new Set([node.id]);
+    while (parent && !seen.has(parent)) {
+      seen.add(parent); const ancestor = byId.get(parent);
+      if (!ancestor) break;
+      if (['heading','section'].includes(ancestor.kind)) depth++;
+      parent = ancestor.parent_id;
+    }
+    return [{ id: node.id, title: hit.line.text, page: hit.page, depth,
+      point: [a*x+c*y+e, b*x+d*y+f] }];
+  }).sort((a,b) => a.page-b.page);
+}

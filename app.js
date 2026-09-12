@@ -143,9 +143,18 @@ function setBusy(value) {
   for(const id of ['file','segmentation','mode','clear'])$(id).disabled=value;
   $('all').disabled=value||!loadedFile;
   $('download').disabled=value||!ocrPages;
+  window.dispatchEvent(new Event('ocr-state-change'));
 }
 function invalidateOcr() {
   ocrPages=null;$('download').disabled=true;
+  window.dispatchEvent(new Event('ocr-state-change'));
+}
+
+export const getOcrState = () => ({ pages: ocrPages, busy });
+export async function searchablePdf() {
+  if (busy || !loadedFile || !ocrPages) throw new Error('Recognize every page before opening the PDF');
+  const bytes = await loadedFile.arrayBuffer();
+  return createSearchablePdf({ ...(pdf ? { pdfBytes: bytes } : { pngBytes: bytes }), pages: ocrPages });
 }
 
 function setCanvasSize(width, height) {

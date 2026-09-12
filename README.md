@@ -53,6 +53,10 @@ npm run bundle   # runtime plus self-contained HTML under dist/
 preprocessing, text geometry and PDF export; they do not certify OCR accuracy on
 a new corpus.
 
+An optional [structure reader experiment](experiments/structure-reader/README.md)
+adds local section detection and a Contents sidebar to the searchable PDF.
+It builds a separate HTML package.
+
 ## Recorded performance
 
 The existing Chromium/Core i3-1315U measurement used the same 153 scanned legal
