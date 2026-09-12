@@ -13,6 +13,7 @@ export function structureInput(pages) {
     width: page.width || Math.max(1, ...page.lines.map(line => line.x + line.width)),
     height: page.height || Math.max(1, ...page.lines.map(line => line.y + line.height)),
     lines: page.lines,
+    layout: page.layout,
   })) };
 }
 

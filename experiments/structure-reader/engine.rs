@@ -4,10 +4,31 @@ use legal_structure::{analyze_instrument, provider_text_document_structure, Prov
 use serde::Deserialize;
 use serde_json::json;
 
+// Compile the exact pinned upstream postprocessor, without a maintained fork.
+mod ppdoc {
+    #[derive(serde::Deserialize)]
+    pub struct PPDocDetection {
+        pub label: String,
+        pub score: f32,
+        pub bbox: [f32; 4],
+    }
+}
+mod ppdoc_postprocess {
+    include!(env!("LEGAL_BROWSER_POSTPROCESS"));
+}
+
 #[derive(Deserialize)]
 struct BrowserInput { text: String, pages: Vec<BrowserPage> }
 #[derive(Deserialize)]
-struct BrowserPage { width: f64, height: f64, lines: Vec<BrowserLine> }
+struct BrowserPage {
+    width: f64, height: f64, lines: Vec<BrowserLine>,
+    #[serde(default)]
+    layout: Option<BrowserLayout>,
+}
+#[derive(Deserialize)]
+struct BrowserLayout {
+    width: u32, height: u32, detections: Vec<ppdoc::PPDocDetection>,
+}
 #[derive(Deserialize)]
 struct BrowserLine { text: String, x: f64, y: f64, width: f64, height: f64 }
 
@@ -36,12 +57,35 @@ pub unsafe extern "C" fn detect(ptr: *const u8, len: usize, profile: u32) -> u64
 
 fn detect_input(input: BrowserInput, profile: u32) -> serde_json::Value {
     if profile == 0 {
+        let mut regions = input.pages.iter().map(|page| page.layout.as_ref().map(|layout|
+            ppdoc_postprocess::scale_detections(page.width, page.height, layout.width, layout.height, &layout.detections)
+        )).collect::<Vec<_>>();
+        let has_layout = regions.iter().any(Option::is_some);
         let mut pages = pdf_pages(input.pages);
+        if has_layout {
+            if regions.iter().zip(&pages).any(|(region, page)| region.is_none() && !page.lines.is_empty()) {
+                return json!({"error": "Layout analysis must cover every nonblank page."});
+            }
+            let mut regions = regions.drain(..).map(Option::unwrap_or_default).collect::<Vec<_>>();
+            ppdoc_postprocess::postprocess_document(&pages, &mut regions);
+            for (page, regions) in pages.iter_mut().zip(&regions) {
+                for line in &mut page.lines {
+                    let Some(index) = ppdoc_postprocess::best_region_index(line.bbox, regions) else {
+                        return json!({"error": "Layout analysis did not cover every OCR line.", "line_id": line.id});
+                    };
+                    line.region_type = regions[index].label.clone();
+                    line.region_id = format!("{}-ppdoc-r{:04}", page.id, regions[index].raw_index);
+                }
+            }
+        }
+        let layout_lines = has_layout.then(|| pages.iter().flat_map(|page| page.lines.iter().map(|line|
+            json!({"id": line.id, "region_id": line.region_id, "region_type": line.region_type})
+        )).collect::<Vec<_>>());
         let separators = vec![None; pages.len()];
         return match derive(&mut pages, &separators, StructureIdentity {
             document_id: "browser-ocr".into(), source_sha256: String::new(),
         }) {
-            Ok(output) => json!({"nodes": output.structure_graph.nodes, "offset_unit": output.structure_graph.offset_unit}),
+            Ok(output) => json!({"nodes": output.structure_graph.nodes, "offset_unit": output.structure_graph.offset_unit, "layout_lines": layout_lines}),
             Err(error) => json!({"error": error.to_string()}),
         };
     }

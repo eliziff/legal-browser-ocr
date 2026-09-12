@@ -48,6 +48,7 @@ dependencies = [
  "legal-pdf-core",
  "legal-pdf-structure",
  "legal-structure",
+ "regex",
  "serde",
  "serde_json",
 ]

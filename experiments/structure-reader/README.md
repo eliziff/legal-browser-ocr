@@ -41,6 +41,22 @@ Full layout parity requires the actual layout provider's browser-compatible
 model/runtime and its real region output; it must be validated independently
 before claiming parity. Keep upstream parser source unchanged.
 
+The WASM build now includes the exact `ppdoc_postprocess.rs` from the
+Cargo-resolved upstream checkout, without a copied fork. `build.mjs --check`
+checks this boundary; `build.mjs` builds it. The source path is resolved through
+Cargo metadata, and upstream private-API changes intentionally fail compilation.
+Optional per-page layout detections pass through that postprocessor and its
+line-assignment function, retaining the upstream all-lines-covered requirement.
+The original region assignments are returned alongside the graph: this pinned
+parser can discard equal-size, unnumbered paragraph titles during classification.
+Do not change sizes to force a desired classification.
+
+`assets/layout-model.json` pins the official Apache-2.0 PaddlePaddle ONNX model
+and its verified SHA-256. The downloaded `assets/layout.onnx` is excluded from
+Git. Loading and inference have been exercised with ONNX Runtime Web WASM,
+but model preprocessing, browser worker integration and real-PDF quality gates
+remain pending. The region fixture test validates the adapter contract only.
+
 The reader uses PDF.js PDFViewer, TextLayerBuilder and their stock stylesheet, including the
 selection anchor and end-of-content stacking used in Beaver's September 11 fix
 (`4d5734078`). Text remains selectable on the PDF. PDF bookmark export is not included.

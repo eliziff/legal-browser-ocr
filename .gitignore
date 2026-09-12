@@ -5,3 +5,4 @@
 benchmark-*.json
 runtime/
 models/
+/experiments/structure-reader/assets/*.onnx

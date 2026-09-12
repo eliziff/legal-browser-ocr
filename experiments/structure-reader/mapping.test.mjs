@@ -39,3 +39,32 @@ test('the pinned WASM engine detects actual agreement sections', async () => {
   const sections = result.nodes.filter(node => ['heading','section'].includes(node.kind));
   assert.ok(sections.some(node => text.slice(node.range.start).startsWith('2. Payment')), JSON.stringify(sections));
 });
+
+test('upstream region assignments survive derivation and require complete coverage', async () => {
+  const wasm = readFileSync(new URL('./target/wasm32-unknown-unknown/release/browser_structure.wasm', import.meta.url));
+  const { instance: { exports: api } } = await WebAssembly.instantiate(wasm);
+  const lines = ['Introduction', 'This is ordinary body text with a complete sentence.', 'Background', 'Another ordinary sentence describes the background.']
+    .map((text, i) => ({ text, x: 50, y: 80 + i * 60, width: 450, height: 20 }));
+  const payload = { text: lines.map(line => line.text).join('\n'), pages: [{ width: 600, height: 800, lines,
+    layout: { width: 600, height: 800, detections: lines.map((line, i) => ({
+      label: i % 2 ? 'text' : 'paragraph_title', score: .95,
+      bbox: [40, line.y - 5, 520, line.y + 30],
+    })) },
+  }] };
+  function detect() {
+    const bytes = new TextEncoder().encode(JSON.stringify(payload)), ptr = api.allocate(bytes.length);
+    new Uint8Array(api.memory.buffer, ptr, bytes.length).set(bytes);
+    const packed = api.detect(ptr, bytes.length, 0), output = Number(packed & 0xffffffffn), length = Number(packed >> 32n);
+    const result = JSON.parse(new TextDecoder().decode(new Uint8Array(api.memory.buffer, output, length)));
+    api.release(output, length); api.release(ptr, bytes.length);
+    return result;
+  }
+  const result = detect();
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.layout_lines.map(line => line.region_type), ['paragraph_title', 'text', 'paragraph_title', 'text']);
+  // This pinned parser drops equal-size unnumbered headings during classify.
+  // Preserve the model's evidence separately rather than inventing font sizes.
+  assert.deepEqual(result.nodes.filter(node => node.kind === 'heading'), []);
+  payload.pages[0].layout.detections = [];
+  assert.match(detect().error, /did not cover/);
+});
