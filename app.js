@@ -150,11 +150,12 @@ function invalidateOcr() {
   window.dispatchEvent(new Event('ocr-state-change'));
 }
 
-export const getOcrState = () => ({ pages: ocrPages, busy });
+export const getOcrState = () => ({ pages: ocrPages, busy, name: loadedFile?.name });
 export async function searchablePdf() {
   if (busy || !loadedFile || !ocrPages) throw new Error('Recognize every page before opening the PDF');
-  const bytes = await loadedFile.arrayBuffer();
-  return createSearchablePdf({ ...(pdf ? { pdfBytes: bytes } : { pngBytes: bytes }), pages: ocrPages });
+  const file = loadedFile, pages = ocrPages, isPdf = Boolean(pdf);
+  const bytes = await file.arrayBuffer();
+  return createSearchablePdf({ ...(isPdf ? { pdfBytes: bytes } : { pngBytes: bytes }), pages });
 }
 
 function setCanvasSize(width, height) {
