@@ -1,19 +1,95 @@
-self.onmessage = async ({ data }) => {
+import * as ort from 'onnxruntime-web/wasm';
+import accurateModel from './assets/layout-model.json';
+import fastModel from './assets/layout-fast-model.json';
+
+let receivePage;
+const unpack = (api, packed) => {
+  if (!packed) throw new Error('Invalid layout image dimensions');
+  const ptr = Number(packed & 0xffffffffn), length = Number(packed >> 32n);
+  try { return new Uint8Array(api.memory.buffer, ptr, length).slice(); }
+  finally { api.release(ptr, length); }
+};
+function call(api, operation, input, ...args) {
+  const bytes = new TextEncoder().encode(JSON.stringify(input)), ptr = api.allocate(bytes.length);
   try {
-    const bytes = new TextEncoder().encode(JSON.stringify(data.input));
-    if (bytes.length > 4_000_000) throw new Error('This experiment supports up to 4 MB of OCR data.');
-    const module = data.module || await WebAssembly.compile(data.wasm);
-    const instance = await WebAssembly.instantiate(module);
-    const api = instance.exports, ptr = api.allocate(bytes.length);
-    let result;
-    try {
-      new Uint8Array(api.memory.buffer, ptr, bytes.length).set(bytes);
-      const packed = api.detect(ptr, bytes.length, data.profile);
-      const output = Number(packed & 0xffffffffn), length = Number(packed >> 32n);
-      try { result = JSON.parse(new TextDecoder().decode(new Uint8Array(api.memory.buffer, output, length))); }
-      finally { api.release(output, length); }
-    } finally { api.release(ptr, bytes.length); }
+    new Uint8Array(api.memory.buffer, ptr, bytes.length).set(bytes);
+    const result = JSON.parse(new TextDecoder().decode(unpack(api, api[operation](ptr, bytes.length, ...args))));
     if (result.error) throw new Error(result.error);
-    self.postMessage({ ...result, module });
+    return result;
+  } finally { api.release(ptr, bytes.length); }
+}
+
+async function layoutPages(data, api) {
+  const model = data.regioning === 'fast' ? fastModel : accurateModel;
+  const [targetHeight, targetWidth] = model.inputSize;
+  if (data.layouts) return data.layouts;
+  ort.env.wasm.numThreads = self.crossOriginIsolated
+    ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 2)) : 1;
+  ort.env.wasm.wasmPaths = data.assetBase;
+  self.postMessage({ progress: 'Loading document layout model…' });
+  const response = await fetch(new URL(model.localFile, data.assetBase));
+  if (!response.ok) throw new Error('Could not load the bundled layout model');
+  const bytes = await response.arrayBuffer();
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+  if (hash !== model.sha256) throw new Error('Layout model checksum does not match this package');
+  const session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] });
+  const layouts = [];
+  try {
+    for (let index = 0; index < data.input.pages.length; index++) {
+      if (!data.input.pages[index].lines.length) { layouts.push(null); continue; }
+      self.postMessage({ progress: `Analysing layout · page ${index + 1} of ${data.input.pages.length}` });
+      const page = await new Promise((resolve, reject) => {
+        receivePage = { resolve, reject };
+        self.postMessage({ renderPage: index + 1 });
+      });
+      const { width, height, bitmap } = page;
+      const canvas = new OffscreenCanvas(width, height);
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0); bitmap.close();
+      const rgba = context.getImageData(0, 0, width, height).data;
+      const rgb = new Uint8Array(width * height * 3);
+      for (let i = 0, j = 0; i < rgba.length; i += 4) { rgb[j++] = rgba[i]; rgb[j++] = rgba[i + 1]; rgb[j++] = rgba[i + 2]; }
+      canvas.width = canvas.height = 1;
+      const ptr = api.allocate(rgb.length);
+      let pixels;
+      try {
+        new Uint8Array(api.memory.buffer, ptr, rgb.length).set(rgb);
+        pixels = new Float32Array(unpack(api, api.preprocess(ptr, rgb.length, width, height, model.variant)).buffer);
+      } finally { api.release(ptr, rgb.length); }
+      const feeds = {
+        image: new ort.Tensor('float32', pixels, [1, 3, targetHeight, targetWidth]),
+        scale_factor: new ort.Tensor('float32', Float32Array.of(targetHeight / height, targetWidth / width), [1, 2]),
+      };
+      if (model.inputNames.includes('im_shape')) feeds.im_shape = new ort.Tensor('float32', Float32Array.of(targetHeight, targetWidth), [1, 2]);
+      const outputs = await session.run(feeds);
+      try {
+        const count = Number(outputs[model.outputNames[1]].data[0]);
+        const values = Array.from(outputs[model.outputNames[0]].data.slice(0, count * 6));
+        const { detections } = call(api, 'decode_boxes', { values, width, height, labels: model.labels, threshold: model.scoreThreshold });
+        layouts.push({ width, height, detections });
+      } finally {
+        for (const tensor of [...Object.values(feeds), ...Object.values(outputs)]) tensor.dispose();
+      }
+    }
+    return layouts;
+  } finally { await session.release(); }
+}
+
+self.onmessage = async ({ data }) => {
+  if (data.page || data.pageError) {
+    const pending = receivePage; receivePage = null;
+    if (data.pageError) pending?.reject(new Error(data.pageError));
+    else pending?.resolve(data.page);
+    return;
+  }
+  try {
+    if (new TextEncoder().encode(JSON.stringify(data.input)).length > 4_000_000) throw new Error('This edition supports up to 4 MB of OCR data.');
+    const module = data.module || await WebAssembly.compile(data.wasm);
+    const { exports: api } = await WebAssembly.instantiate(module);
+    const layouts = data.profile === 0 ? await layoutPages(data, api) : null;
+    if (layouts) data.input.pages.forEach((page, i) => { page.layout = layouts[i]; });
+    self.postMessage({ progress: 'Building document structure…' });
+    const result = call(api, 'detect', data.input, data.profile);
+    self.postMessage({ ...result, module, layouts });
   } catch (error) { self.postMessage({ error: error.message }); }
 };

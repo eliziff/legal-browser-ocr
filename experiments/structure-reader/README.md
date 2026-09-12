@@ -1,91 +1,129 @@
-# Structure reader experiment
+﻿# Browser structure reader
 
-Recognize every page to open and remember a searchable PDF automatically.
-Choose General, Legislation or Contract and select **Detect structure** to add a
-Contents sidebar. Section buttons jump to the OCR line on its source page.
-The reader scrolls continuously; use the page field for a direct jump and the
-zoom menu for fit-width, fit-page or a fixed zoom.
+This is a separate experimental edition of legal-browser-ocr. Extract the whole
+package, then run `Start.ps1` on Windows (Node.js required), or `node serve.mjs`.
+Open http://127.0.0.1:8799/. The server only serves static files on loopback;
+OCR, layout inference, PDF viewing and storage all run in your browser. No document
+is uploaded. The bundled models work without external services.
 
-Recent PDFs appear as navigation tabs. The browser stores PDF Blobs, OCR geometry
-and detected contents in IndexedDB, with the active document and last page in
-small synchronous localStorage entries. Reloading restores the active PDF without
-OCR. The **×** on each tab asks for confirmation before deleting its saved PDF.
-**History** lists saved PDFs; **Contents** collapses the dock and **Full screen**
-uses browser fullscreen. Storage is specific
-to this browser/origin; clearing browser data removes it. Storage failures are
-reported while reading and downloading remain available for the session.
+The folder may also be served by a static HTTPS host. Send
+`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` to enable WASM threads; otherwise
+layout inference uses one thread. Opening index.html directly is insufficient
+for loading the layout model.
 
-The OCR preview and side-by-side text live in a disclosure that closes when a
-processed PDF opens or detection finishes. Expand **OCR preview and text** to
-inspect results or change the crop. Input changes do not alter already saved PDFs.
+## Reading and detection
 
-Detection runs locally in a disposable worker. General uses upstream
-`legal-pdf-structure::derive`; Legislation and Contract use `legal-structure`.
-The direct structure dependency matches the PDF parser's pinned revision, so
-the WASM contains one version of the engine. Cargo.lock records the combination.
-The compiled WebAssembly.Module is reused between detections; terminating each
-worker releases the document's WASM memory. OCR data is limited to 4 MB.
+Recognize every page to open a searchable PDF. **Detect structure** adds a
+collapsible Contents dock. General uses visual layout regions; Legislation and
+Contract use the corresponding upstream text parsers. General is the default.
 
-The browser passes OCR text, page dimensions and line boxes. General nodes map
-back through upstream line IDs, because the parser's normalized text offsets
-are not offsets into raw OCR text. The adapter has no heading grammar.
+General offers two regioning models:
 
-**Current limitation:** this package does not run the upstream PPDoc layout
-model. Its native OpenVINO/ONNX path is not a browser WASM implementation.
-OCR supplies neither reliable font names/bold flags nor semantic region labels.
-The current bridge labels lines as body and uses ink height as a size estimate.
-Consequently this is structure inference over OCR lines, not the complete native
-PDF-analysis pipeline. Unnumbered title-case headings can be missed even when
-visually obvious. Do not manufacture heading labels from size thresholds.
-Full layout parity requires the actual layout provider's browser-compatible
-model/runtime and its real region output; it must be validated independently
-before claiming parity. Keep upstream parser source unchanged.
+| Option | Model | Input | Weight size | Tradeoff |
+| --- | --- | --- | --- | --- |
+| Accurate (default) | PP-DocLayout_plus-L | 800 x 800 | about 124 MiB | Better overall heading coverage; slower |
+| Fast | PP-DocLayout-S | 480 x 480 | about 4.7 MiB | Lower latency; can miss headings |
 
-The WASM build now includes the exact `ppdoc_postprocess.rs` from the
-Cargo-resolved upstream checkout, without a copied fork. `build.mjs --check`
-checks this boundary; `build.mjs` builds it. The source path is resolved through
-Cargo metadata, and upstream private-API changes intentionally fail compilation.
-Optional per-page layout detections pass through that postprocessor and its
-line-assignment function, retaining the upstream all-lines-covered requirement.
-The original region assignments are returned alongside the graph: this pinned
-parser can discard equal-size, unnumbered paragraph titles during classification.
-Do not change sizes to force a desired classification.
+Both models are bundled and run in ONNX Runtime Web WASM in a disposable worker.
+The selector is disabled for the text-only legal profiles. A smaller model can
+occasionally find a heading the larger model misses; Accurate is not a guarantee.
+The browser remembers each document's selection and caches its layout results.
 
-`assets/layout-model.json` pins the official Apache-2.0 PaddlePaddle ONNX model
-and its verified SHA-256. The downloaded `assets/layout.onnx` is excluded from
-Git. Loading and inference have been exercised with ONNX Runtime Web WASM,
-but model preprocessing, browser worker integration and real-PDF quality gates
-remain pending. The region fixture test validates the adapter contract only.
+**Page layout** is the separate OCR segmentation choice. Keep **Tesseract layout**
+for columns and complex pages. Fast projection is useful for simple, single-column
+pages; it can join unrelated text across columns. Regioning cannot repair OCR
+that already joined or omitted words. Neither option changes the OCR runtime.
 
-The reader uses PDF.js PDFViewer, TextLayerBuilder and their stock stylesheet, including the
-selection anchor and end-of-content stacking used in Beaver's September 11 fix
-(`4d5734078`). Text remains selectable on the PDF. PDF bookmark export is not included.
-The standard PDF.js rendering queue bounds rendered pages and caps each canvas at
-8 million pixels. Only the active PDF Blob is read into an ArrayBuffer; switching
-documents destroys the previous PDF.js loading task. The OCR runtime is unchanged.
+Read continuously, enter a page number, choose a zoom, or enter full screen.
+PDF.js owns text selection and rendering, including its stock text-layer CSS.
+The rendering queue bounds live page canvases, capped at eight million pixels each.
+OCR preview and text collapse after processing or detection.
 
-Validation: 20 existing tests and two mapping/WASM tests passed. A two-page
-synthetic scan passed real browser OCR, four detected sections, keyboard section
-jumps, continuous scrolling, recent-document switching, reload restoration,
-mobile reflow and removal from storage. A 40-page fixture retained four live
-canvases after jumping to page 40. Two six-line
-drags selected 231 characters with no backward jumps or next-section overshoot.
-This verifies integration, not new corpus-wide detection accuracy.
+Recent PDFs appear as tabs. The tab's x asks before removing its saved PDF;
+History lists saved documents. IndexedDB stores PDFs, OCR geometry and contents;
+reloading restores the active PDF and last page without OCR. Storage belongs to
+this browser and origin. Clearing browser data removes saved documents.
 
-Build from the repository root (Node/npm, Rust and the
-`wasm32-unknown-unknown` target required):
+## Upstream boundary
+
+The Rust WASM adapter pins legal-pdf-parser and the same legal-structure revision
+used by that parser. Cargo.lock records the exact combination. The upstream parser
+and optimized OCR runtime are unchanged. There is no new heading grammar.
+
+The build compiles the pinned upstream cubic image preprocessing, detection
+postprocessing and region-to-line assignment directly from its Cargo checkout.
+Pure functions that currently share a file with native inference are selected
+verbatim at build time. Upstream source changes fail the build if these boundaries
+change; no second maintained copy is checked in.
+
+Model manifests pin revisions, SHA-256, label order, dimensions and the published
+0.5 output threshold. Original inference YAML files record preprocessing settings.
+The Fast ONNX export is by stefanj0, from the official PaddlePaddle model; Accurate
+uses PaddlePaddle's ONNX export. Runtime loading checks each model's SHA-256.
+
+OCR crop geometry is transformed to PDF page coordinates. Unknown font size stays
+unknown: ink-box height is not a font metric. Upstream only receives region
+assignments when every nonblank OCR line matches a region. Otherwise the reader
+reports partial coverage. General's ToC retains model heading regions separately:
+the pinned parser can demote valid unnumbered titles and its structural sections
+can include ordinary numbered list items. Legal profiles retain parser sections.
+
+Detection processes one page at a time, uses up to four WASM threads where available,
+and disposes its worker after completion. Compiled Rust WASM and per-document layout
+results are reused. The input limit is 4 MB of OCR JSON. PDF bookmark export and
+full native extraction parity are not included.
+
+## Build and validation
+
+From the repository root, with Node/npm, Rust, the wasm32-unknown-unknown target
+and the existing licensed OCR assets described in the root README:
 
 ```sh
 npm ci
 npm run bundle
+node experiments/structure-reader/fetch-models.mjs
 node experiments/structure-reader/build.mjs
+npm test
 node --test experiments/structure-reader/mapping.test.mjs
 ```
 
-The existing licensed `assets/` are required by `npm run bundle`, as described in
-the root README. Open `dist/legal-browser-ocr-structure.html` locally. This is a
-separate self-contained experimental package; the standard release is unchanged.
+The runnable package is `dist/legal-browser-ocr-structure/`. Keep all files together.
+The standard release is separate. Playwright checks require Playwright, Chromium
+and @napi-rs/canvas in the development environment:
 
-With Playwright and Chromium available in your development environment, run
-`node experiments/structure-reader/browser-smoke.mjs` to repeat the full browser
-check. Its generated fixture and screenshots go under `dist/structure-smoke/`.
+```sh
+node experiments/structure-reader/browser-smoke.mjs
+node experiments/structure-reader/real-pdf-smoke.mjs
+```
+
+The first script exercises real OCR, both models, selection drags, ToC, fullscreen,
+restoration, tab removal and bounded rendering on a 40-page fixture. The second
+uses public source PDFs downloaded to `dist/structure-smoke/public-{name}.pdf`:
+
+- guidelines: https://www.w3.org/WAI/GL/WD-WAI-PAGEAUTH-19990104/wai-pageauth.pdf (pages 4-5)
+- contract: https://canadabuys.canada.ca/documents/pub/att/2021/12/13/014e3478bc1a7ebe416c30db5613273d/ncc_rfso_tender_al1824_eng.pdf (page 12)
+- legislation: https://laws-lois.justice.gc.ca/PDF/C-46.pdf (page 71 in the tested July 2026 consolidation; recheck page selection if it changes)
+
+Results, raw model evidence and screenshots go under `dist/structure-smoke/`.
+These are integration checks over selected pages, not a corpus-wide accuracy claim.
+
+## Measured limits
+
+On this machine, the two-page synthetic scan took approximately 7-8 seconds with
+Accurate and 0.5-0.7 seconds with Fast, including cold worker/model loading. Accurate
+found four of four headings, Fast three. Reusing cached regions took about 60 ms.
+Two six-line selection drags stayed monotonic without overshooting the section.
+The 40-page reader retained three to four live canvases after a jump to page 40.
+
+On the four real sample pages, Accurate found 10 of 11 independently listed
+headings; Fast found 8 of 11. Accurate missed the contract's top title, while Fast
+missed Priorities and both English legislation headings. Both models can also
+label prose as a heading. These are disclosed model limitations, not a repaired
+upstream parser or proof of native parity. The sample test reports every miss and
+checks that the two choices collectively cover the expected headings; it does not
+require either model to be perfect. The published source page numbers and test
+labels are explicit so future model comparisons can use the same evidence.
+
+For the browser checks, install Playwright in your development environment and
+run `npx playwright install chromium` if Chromium is not already available.

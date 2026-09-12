@@ -2,28 +2,34 @@ import { chromium } from 'playwright';
 import { PDFDocument } from 'pdf-lib';
 import { createCanvas } from '@napi-rs/canvas';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 
 mkdirSync('dist/structure-smoke', { recursive: true });
 const pdf = await PDFDocument.create();
 for (const lines of [
-  ['1. Definitions','This agreement defines the terms used by the parties.','The buyer accepts delivery of the goods.','The seller shall provide written notice.','All notices must be sent to the address below.','The parties agree to act in good faith.','2. Payment','The buyer shall pay the agreed price.'],
-  ['3. Termination','Either party may terminate this agreement.','Notice must be given in writing.','4. Governing Law','This agreement is governed by Canadian law.'],
+  ['Definitions','This agreement defines the terms used by the parties.','The buyer accepts delivery of the goods.','The seller shall provide written notice.','All notices must be sent to the address below.','The parties agree to act in good faith.','Payment','The buyer shall pay the agreed price.'],
+  ['Termination','Either party may terminate this agreement.','Notice must be given in writing.','Governing Law','This agreement is governed by Canadian law.'],
 ]) {
   const canvas = createCanvas(900,1200), context = canvas.getContext('2d');
   context.fillStyle='white'; context.fillRect(0,0,900,1200); context.fillStyle='black'; context.font='26px Arial';
-  lines.forEach((line,i)=>context.fillText(line,60,100+i*60));
+  lines.forEach((line,i)=>{ context.font = line.endsWith('.') ? '26px Arial' : 'bold 34px Arial'; context.fillText(line,60,100+i*60); });
   const image=await pdf.embedPng(canvas.toBuffer('image/png'));
   pdf.addPage([600,800]).drawImage(image,{x:0,y:0,width:600,height:800});
 }
 writeFileSync('dist/structure-smoke/reader-fixture.pdf',await pdf.save());
+const server = spawn(process.execPath, ['dist/legal-browser-ocr-structure/serve.mjs', '8798'], { stdio: ['ignore','pipe','pipe'] });
+await new Promise((resolve, reject) => {
+  server.stdout.once('data', resolve); server.once('error', reject);
+  server.once('exit', code => reject(new Error('Test server exited: ' + code)));
+});
 const browser=await chromium.launch({headless:true});
 let page;
 try {
   page=await browser.newPage({viewport:{width:1400,height:1000}});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto(pathToFileURL(process.cwd()+'/dist/legal-browser-ocr-structure.html').href);
+  await page.goto('http://127.0.0.1:8798/');
   await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Model ready'),{},{timeout:90000});
   await page.locator('#file').setInputFiles('dist/structure-smoke/reader-fixture.pdf');
   await page.waitForFunction(()=>document.querySelector('#status').textContent==='Page 1 ready.');
@@ -31,13 +37,21 @@ try {
   await page.locator('#all').click();
   await page.waitForFunction(()=>!document.querySelector('#download').disabled,{},{timeout:90000});
   assert.equal(await page.locator('#structure-profile').inputValue(),'0');
+  const accurateStarted = performance.now();
   await page.locator('#detect-structure').click();
   await page.waitForFunction(()=>document.querySelectorAll('.contents nav button').length >= 2,{},{timeout:90000});
   await page.waitForFunction(()=>document.querySelector('.pdfViewer .textLayer .endOfContent'));
   assert.ok(await page.locator('.pdfViewer .page canvas').first().evaluate(canvas=>Math.abs(canvas.clientWidth/canvas.clientHeight-canvas.width/canvas.height)<.01),'PDF page must retain its aspect ratio');
   const titles=await page.locator('.contents nav button').allTextContents();
+  console.log('ACCURATE_LAYOUT_MS',Math.round(performance.now()-accurateStarted));
   console.log('CONTENTS',titles);
-  assert.ok(titles.some(t=>/Definitions|Payment|Termination/.test(t)));
+  assert.deepEqual(titles,['Definitions · 1','Payment · 1','Termination · 2','Governing Law · 2']);
+  const firstLayouts = await page.evaluate(async()=>{
+    const db=await new Promise(resolve=>{const request=indexedDB.open('legal-ocr-recent-pdfs');request.onsuccess=()=>resolve(request.result)});
+    const records=await new Promise(resolve=>{const request=db.transaction('documents').objectStore('documents').getAll();request.onsuccess=()=>resolve(request.result)});
+    db.close();return Object.keys(records[0].layoutCache || {}).length;
+  });
+  assert.equal(firstLayouts,1);
   for (const profile of ['2','1','0']) {
     await page.locator('#structure-profile').selectOption(profile);
     await page.locator('#detect-structure').click();
@@ -45,6 +59,24 @@ try {
     assert.ok(!(await page.locator('#structure-status').textContent()).includes('Could not detect'));
   }
   assert.equal(await page.locator('.contents nav button').count(),4);
+  await page.locator('#regioning').selectOption('fast');
+  const fastStarted = performance.now();
+  await page.locator('#detect-structure').click();
+  await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
+  console.log('FAST_LAYOUT_MS',Math.round(performance.now()-fastStarted),'CONTENTS',await page.locator('.contents nav button').allTextContents());
+  assert.deepEqual(await page.locator('.contents nav button').allTextContents(),['Definitions · 1','Payment · 1','Termination · 2']);
+  assert.ok(!(await page.locator('#structure-status').textContent()).includes('Could not detect'));
+  const diagnostic = await page.evaluate(async()=>{
+    const db=await new Promise(resolve=>{const request=indexedDB.open('legal-ocr-recent-pdfs');request.onsuccess=()=>resolve(request.result)});
+    const records=await new Promise(resolve=>{const request=db.transaction('documents').objectStore('documents').getAll();request.onsuccess=()=>resolve(request.result)});
+    db.close();return records.map(({blob,...record})=>record);
+  });
+  writeFileSync('dist/structure-smoke/layout-evidence.json',JSON.stringify(diagnostic,null,2));
+  await page.locator('#regioning').selectOption('accurate');
+  const cachedStarted = performance.now();
+  await page.locator('#detect-structure').click();
+  await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
+  console.log('CACHED_LAYOUT_MS',Math.round(performance.now()-cachedStarted));
   await page.locator('#toggle-contents').click();
   assert.equal(await page.locator('#contents-dock').isVisible(),false);
   assert.equal(await page.locator('#toggle-contents').getAttribute('aria-expanded'),'false');
@@ -80,7 +112,7 @@ try {
     console.log('SELECTION',repeat,selected.length,'characters; no backwards jumps');
   }
   await page.screenshot({path:'dist/structure-smoke/reader-selection.png'});
-  await page.locator('#reader-page').fill('2'); await page.locator('#reader-page').press('Enter');
+  await page.locator('.contents nav button').filter({hasText:'Termination'}).click();
   await page.waitForFunction(()=>document.querySelector('#reader-page').value==='2');
   assert.equal(await page.locator('#ocr-preview').getAttribute('open'),null);
   await page.reload();
@@ -100,6 +132,12 @@ try {
     await new Promise((resolve,reject)=>{const tx=db.transaction('documents','readwrite');tx.objectStore('documents').put({id:'long-fixture',name:'Long fixture.pdf',blob:new Blob([Uint8Array.from(bytes)],{type:'application/pdf'}),entries:[],page:1,profile:'2'});tx.oncomplete=resolve;tx.onerror=reject});db.close();
   },Array.from(await longPdf.save()));
   await page.reload();
+  await page.locator('#open-history').click();
+  assert.equal(await page.getByRole('dialog', {name:'Recent PDFs'}).isVisible(),true);
+  assert.equal(await page.locator('.history-row').count(),2);
+  await page.screenshot({path:'dist/structure-smoke/history.png'});
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#history-dialog').isVisible(),false);
   await page.locator('.recent-pdf').filter({hasText:'Long fixture.pdf'}).click();
   await page.waitForFunction(()=>document.querySelector('#reader-total').textContent==='of 40');
   await page.locator('#reader-page').fill('40');await page.locator('#reader-page').press('Enter');
@@ -139,4 +177,4 @@ try {
   console.log('FAILURE STATE',await page?.evaluate(()=>({status:document.querySelector('#structure-status')?.textContent,page:document.querySelector('#reader-page')?.value,total:document.querySelector('#reader-total')?.textContent,contents:document.querySelector('.contents nav')?.textContent})));
   await page?.screenshot({path:'dist/structure-smoke/failure.png'});
   throw error;
-} finally { await browser.close(); }
+} finally { await browser.close(); server.kill(); }

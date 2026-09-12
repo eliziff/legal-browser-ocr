@@ -1,0 +1,16 @@
+{
+  "repository": "stefanj0/PP-DocLayout-S-ONNX",
+  "revision": "7e851b9e5ad66613d7318a3213ab3336ebe0a514",
+  "upstreamRepository": "PaddlePaddle/PP-DocLayout-S",
+  "upstreamRevision": "8ac289e66575bb9bba6e15c53719d8b15cc9b3b2",
+  "file": "pp_doclayout_s.onnx",
+  "localFile": "layout-fast.onnx",
+  "variant": 1,
+  "sha256": "33688dbee1c23e34b81777e97cb428eb40f24b242c02b5f623484959e830aec8",
+  "license": "Apache-2.0",
+  "scoreThreshold": 0.5,
+  "inputSize": [480, 480],
+  "inputNames": ["image", "scale_factor"],
+  "outputNames": ["fetch_name_0", "fetch_name_1"],
+  "labels": ["paragraph_title", "image", "text", "number", "abstract", "content", "figure_title", "formula", "table", "table_title", "reference", "doc_title", "footnote", "header", "algorithm", "footer", "seal", "chart_title", "chart", "formula_number", "header_image", "footer_image", "aside_text"]
+}

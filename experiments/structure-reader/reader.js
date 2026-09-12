@@ -5,6 +5,8 @@ import { getOcrState, searchablePdf } from '../../app.js';
 import { structureInput, outlineEntries } from './mapping.js';
 import { recentDocuments, rememberDocument, forgetDocument, activeDocument, rememberActive, rememberPage } from './recent.js';
 import styles from './reader.css';
+import layoutModel from './assets/layout-model.json';
+import fastLayoutModel from './assets/layout-fast-model.json';
 
 const style = document.createElement('style');
 style.textContent = pdfStyles + styles; document.head.append(style);
@@ -24,14 +26,18 @@ panel.innerHTML = `<div class="reader-tabs"><nav class="recent-pdfs" aria-label=
     <button type="button" id="reader-fullscreen" class="secondary">Full screen</button>
   </div><div class="reader-viewport"><div class="reader-scroll" tabindex="0" aria-label="PDF pages"><div class="pdfViewer"></div></div></div></div>
 </div>`;
-panel.insertAdjacentHTML('beforeend', `<dialog id="history-dialog"><form method="dialog"><header><h2>Recent PDFs</h2><button value="close" class="secondary compact">Close</button></header><div class="history-list"></div></form></dialog>
-<dialog id="remove-dialog"><form method="dialog"><h2>Remove PDF?</h2><p class="remove-message"></p><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button value="confirm" class="danger">Remove PDF</button></div></form></dialog>`);
+panel.insertAdjacentHTML('beforeend', `<dialog id="history-dialog" aria-labelledby="history-title"><form method="dialog"><header><h2 id="history-title">Recent PDFs</h2><button value="close" class="secondary compact">Close</button></header><div class="history-list"></div></form></dialog>
+<dialog id="remove-dialog" aria-labelledby="remove-title"><form method="dialog"><h2 id="remove-title">Remove PDF?</h2><p class="remove-message"></p><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button value="confirm" class="danger">Remove PDF</button></div></form></dialog>`);
 const form = document.getElementById('form'); form.after(panel);
 const options = document.createElement('div'); options.className = 'processing-options';
 for (const id of ['file','segmentation','mode']) options.append(document.getElementById(id).closest('label'));
 const profileLabel = document.createElement('label');
 profileLabel.innerHTML = `Document type<select id="structure-profile"><option value="0">General</option><option value="1">Legislation</option><option value="2">Contract</option></select>`;
 options.append(profileLabel);
+const regioningLabel = document.createElement('label');
+regioningLabel.innerHTML = 'Regioning<select id="regioning"><option value="accurate">Accurate</option><option value="fast">Fast</option></select>';
+options.append(regioningLabel);
+const regioning = regioningLabel.querySelector('select');
 const actions = document.createElement('div'); actions.className = 'processing-actions';
 const button = document.createElement('button'); button.id = 'detect-structure'; button.type = 'button'; button.className = 'secondary'; button.textContent = 'Detect structure';
 actions.append(document.getElementById('all'), button, document.getElementById('download'), document.getElementById('clear'));
@@ -55,9 +61,11 @@ let wasmModule;
 const storageError = () => { storageMessage.textContent = 'Could not remember PDFs in this browser. You can still read and download them in this session.'; };
 const persist = record => rememberDocument(record).catch(storageError);
 
+profile.addEventListener('change', controls);
 function controls() {
   button.disabled = opening || Boolean(worker) || !active?.ocrPages;
   profile.disabled = opening || Boolean(worker);
+  regioning.disabled = opening || Boolean(worker) || profile.value !== '0';
   download.disabled = opening || !active;
 }
 function drawTabs() {
@@ -136,7 +144,8 @@ async function removeRecord(record) {
   if (record !== active) { drawTabs(); return; }
   if (records.length) await openRecord(records.at(-1));
   else {
-    generation++; viewer.setDocument(null); linkService.setDocument(null); await pdfTask?.destroy(); pdfTask = null;
+    generation++; worker?.terminate(); worker = null;
+    viewer.setDocument(null); linkService.setDocument(null); await pdfTask?.destroy(); pdfTask = null;
     active = null; body.hidden = true; drawTabs(); controls(); await rememberActive(null).catch(storageError);
     message.textContent = 'No recent PDFs. Recognize a document to start reading.';
   }
@@ -152,6 +161,7 @@ async function openRecord(record) {
   const token = ++generation; worker?.terminate(); worker = null;
   opening = true; active = record; controls(); drawTabs(); drawContents();
   profile.value = record.profile || '0'; preview.open = false;
+  regioning.value = record.regioning || 'accurate';
   viewer.setDocument(null); linkService.setDocument(null);
   const previous = pdfTask; pdfTask = null;
   await previous?.destroy();
@@ -163,7 +173,7 @@ async function openRecord(record) {
     const pdf = await pdfTask.promise;
     if (token !== generation) return;
     body.hidden = false; linkService.setDocument(pdf); viewer.setDocument(pdf);
-    message.textContent = record.entries.length ? `${record.entries.length} sections remembered in this browser` : 'PDF ready. Detect structure to add a contents list.';
+    message.textContent = record.structureStatus || (record.entries.length ? `${record.entries.length} sections remembered in this browser` : 'PDF ready. Detect structure to add a contents list.');
     rememberActive(record.id).catch(storageError);
   } catch (error) {
     if (token === generation) { opening = false; controls(); message.textContent = `Could not open PDF: ${error.message}`; }
@@ -188,25 +198,62 @@ window.addEventListener('ocr-state-change', () => {
 button.onclick = async () => {
   if (!active?.ocrPages || worker || opening) return;
   const record = active, token = generation;
+  const selectedModel = regioning.value === 'fast' ? fastLayoutModel : layoutModel;
   message.textContent = 'Detecting sections…';
-  const input = structureInput(record.ocrPages), assets = globalThis.LEGAL_STRUCTURE_ASSETS;
+  const assets = globalThis.LEGAL_STRUCTURE_ASSETS;
+  const cacheKey = assets.revision + ':' + selectedModel.sha256;
   try {
+    if (profile.value === '0' && location.protocol === 'file:') throw new Error('Open this edition with Start.ps1 to load the bundled layout model');
     const wasm = wasmModule ? null : Uint8Array.from(atob(assets.wasm), c => c.charCodeAt(0));
     const url = URL.createObjectURL(new Blob([assets.worker], { type: 'text/javascript' }));
     worker = new Worker(url); URL.revokeObjectURL(url); controls();
+    const pdf = viewer.pdfDocument;
+    const viewports = await Promise.all(record.ocrPages.map(async (_, index) => (await pdf.getPage(index + 1)).getViewport({ scale: 1 })));
+    if (token !== generation) return;
+    const input = structureInput(record.ocrPages, viewports);
     const result = await new Promise((resolve, reject) => {
-      worker.onmessage = ({ data }) => data.error ? reject(new Error(data.error)) : resolve(data);
+      const currentWorker = worker;
+      worker.onmessage = async ({ data }) => {
+        if (token !== generation) return;
+        if (data.progress) { message.textContent = data.progress; return; }
+        if (data.renderPage) {
+          try {
+            const pdfPage = await pdf.getPage(data.renderPage);
+            const viewport = pdfPage.getViewport({ scale: Math.min(1, 4096 / Math.max(viewports[data.renderPage-1].width, viewports[data.renderPage-1].height)) });
+            const canvas = new OffscreenCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+            await pdfPage.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            const bitmap = canvas.transferToImageBitmap();
+            currentWorker.postMessage({ page: { bitmap, width: canvas.width, height: canvas.height } }, [bitmap]);
+            canvas.width = canvas.height = 1;
+          } catch (error) { currentWorker.postMessage({ pageError: error.message }); }
+          return;
+        }
+        data.error ? reject(new Error(data.error)) : resolve(data);
+      };
       worker.onerror = event => reject(new Error(event.message || 'Structure detection failed'));
-      worker.postMessage({ input: { text: input.text, pages: input.pages }, profile: Number(profile.value), wasm, module: wasmModule }, wasm ? [wasm.buffer] : []);
+      worker.postMessage({ input: { text: input.text, pages: input.pages }, profile: Number(profile.value),
+        assetBase: new URL('./', location.href).href,
+        regioning: regioning.value,
+        layouts: record.layoutCache?.[cacheKey],
+        wasm, module: wasmModule }, wasm ? [wasm.buffer] : []);
     });
     if (token !== generation) return;
     wasmModule = result.module;
     if (result.offset_unit !== 'utf16') throw new Error('Unsupported structure coordinates');
-    record.entries = outlineEntries(result.nodes, input.lines); record.profile = profile.value;
+    record.entries = outlineEntries(result.nodes, input.lines, result.layout_lines); record.profile = profile.value;
+    const missing = result.unclassified_lines?.length || 0;
+    record.structureStatus = missing
+      ? `${record.entries.length} headings found; ${missing} lines unclassified. ${regioning.value === 'fast' ? 'Try Accurate for more coverage.' : 'Review the contents against the PDF.'}`
+      : record.entries.length ? `${record.entries.length} sections detected. Review against the PDF.` : 'No sections detected. You can still scroll and read the PDF.';
+    if (result.layouts) {
+      record.layoutCache ??= {};
+      record.layoutCache[cacheKey] = result.layouts;
+      record.regioning = regioning.value;
+    }
     await persist(record);
     if (token !== generation) return;
     drawContents(); preview.open = false;
-    message.textContent = record.entries.length ? `${record.entries.length} sections detected. Review against the PDF.` : 'No sections detected. You can still scroll and read the PDF.';
+    message.textContent = record.structureStatus;
   } catch (error) { if (token === generation) message.textContent = `Could not detect structure: ${error.message}. Try again.`; }
   finally { if (token === generation) { worker?.terminate(); worker = null; controls(); } }
 };

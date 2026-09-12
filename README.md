@@ -55,7 +55,7 @@ a new corpus.
 
 An optional [structure reader experiment](experiments/structure-reader/README.md)
 adds local section detection and a Contents sidebar to the searchable PDF.
-It builds a separate HTML package.
+It builds a separate browser package with bundled layout models and a local launcher.
 
 ## Recorded performance
 

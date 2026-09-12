@@ -5,7 +5,7 @@
 .structure-app .processing-actions{margin-top:.75rem}
 .structure-app #clear{background:transparent;color:ButtonText;border:1px solid transparent}
 .structure-app button.compact{min-height:2rem;padding:.3rem .65rem;font-weight:500}
-#structure-reader{margin-block:1rem;border:1px solid #d5d7da;border-radius:.65rem;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgb(0 0 0/.08)}
+#structure-reader{margin-block:1rem;border:1px solid #d5d7da;border-radius:.65rem;overflow:hidden;background:#fff;color-scheme:light;color:#1d2939;font:1rem/1.45 system-ui,sans-serif;box-shadow:0 1px 3px rgb(0 0 0/.08)}
 #structure-reader .reader-tabs{display:flex;align-items:end;background:#f4f5f7;border-bottom:1px solid #d5d7da;padding:.35rem .5rem 0}
 #structure-reader .reader-tabs>#open-history{margin:0 0 .35rem auto}
 #structure-reader .recent-pdfs{display:flex;gap:.2rem;overflow:auto;min-width:0}
@@ -43,6 +43,7 @@
 #ocr-preview{margin-block:1rem}
 #structure-reader dialog{width:min(28rem,calc(100% - 2rem));max-height:min(32rem,calc(100% - 2rem));padding:1rem;border:1px solid GrayText;border-radius:.6rem;background:Canvas;color:CanvasText}
 #structure-reader dialog::backdrop{background:rgb(0 0 0/.45)}
+#structure-reader dialog form{display:block;margin:0}
 #structure-reader dialog header,#structure-reader .dialog-actions{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
 #structure-reader dialog h2{font-size:1.15rem;margin:0 0 .75rem}
 #structure-reader .history-list{display:grid;gap:.35rem;overflow:auto}

@@ -16,6 +16,7 @@ test('outline offsets retain blank pages, Unicode, repeated headings and rotated
     { page: 1, point: [10,780], depth: 0 }, { page: 3, point: [50,65], depth: 1 },
   ]);
   assert.deepEqual(outlineEntries([{ id: 'bad', kind: 'heading', range: { start: 999 } }], input.lines), []);
+  assert.deepEqual(outlineEntries(nodes, input.lines, []), [], 'General contents must not turn parser list sections into headings');
 });
 
 test('the pinned WASM engine detects actual agreement sections', async () => {
@@ -38,6 +39,16 @@ test('the pinned WASM engine detects actual agreement sections', async () => {
   assert.equal(result.offset_unit, 'utf16');
   const sections = result.nodes.filter(node => ['heading','section'].includes(node.kind));
   assert.ok(sections.some(node => text.slice(node.range.start).startsWith('2. Payment')), JSON.stringify(sections));
+});
+
+test('OCR crop coordinates become page coordinates without size heuristics', () => {
+  const input = structureInput([{ width: 400, height: 600, transform: [.5,0,0,-.5,20,700],
+    lines: [{ text: 'Heading', x: 40, y: 80, width: 200, height: 32 }] }],
+    [{ width: 600, height: 800, transform: [1,0,0,-1,0,800] }]);
+  assert.deepEqual(input.pages[0].lines[0], { text:'Heading', x:40, y:140, width:100, height:16 });
+  assert.equal(input.pages[0].height, 800);
+  assert.deepEqual(outlineEntries([], input.lines, [{ id:'p1-l1',region_id:'r1',region_type:'paragraph_title' }])
+    .map(({title, point})=>({title,point})), [{title:'Heading',point:[40,660]}]);
 });
 
 test('upstream region assignments survive derivation and require complete coverage', async () => {
@@ -66,5 +77,9 @@ test('upstream region assignments survive derivation and require complete covera
   // Preserve the model's evidence separately rather than inventing font sizes.
   assert.deepEqual(result.nodes.filter(node => node.kind === 'heading'), []);
   payload.pages[0].layout.detections = [];
-  assert.match(detect().error, /did not cover/);
+  const incomplete = detect();
+  assert.equal(incomplete.layout_complete, false);
+  assert.equal(incomplete.unclassified_lines.length, 4);
+  assert.deepEqual(incomplete.layout_lines, []);
+  assert.deepEqual(incomplete.nodes.filter(node => node.kind === 'heading'), []);
 });
