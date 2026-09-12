@@ -38,6 +38,13 @@ try {
   const titles=await page.locator('.contents nav button').allTextContents();
   console.log('CONTENTS',titles);
   assert.ok(titles.some(t=>/Definitions|Payment|Termination/.test(t)));
+  for (const profile of ['2','1','0']) {
+    await page.locator('#structure-profile').selectOption(profile);
+    await page.locator('#detect-structure').click();
+    await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
+    assert.ok(!(await page.locator('#structure-status').textContent()).includes('Could not detect'));
+  }
+  assert.equal(await page.locator('.contents nav button').count(),4);
   await page.locator('#toggle-contents').click();
   assert.equal(await page.locator('#contents-dock').isVisible(),false);
   assert.equal(await page.locator('#toggle-contents').getAttribute('aria-expanded'),'false');

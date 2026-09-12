@@ -51,6 +51,7 @@ const eventBus = new EventBus(), linkService = new PDFLinkService({ eventBus });
 const viewer = new PDFViewer({ container: scroll, eventBus, linkService, maxCanvasPixels: 8_000_000 });
 linkService.setViewer(viewer);
 let records = [], active = null, pdfTask, worker, opening = false, generation = 0, lastOcrPages;
+let wasmModule;
 const storageError = () => { storageMessage.textContent = 'Could not remember PDFs in this browser. You can still read and download them in this session.'; };
 const persist = record => rememberDocument(record).catch(storageError);
 
@@ -190,15 +191,16 @@ button.onclick = async () => {
   message.textContent = 'Detecting sections…';
   const input = structureInput(record.ocrPages), assets = globalThis.LEGAL_STRUCTURE_ASSETS;
   try {
-    const wasm = Uint8Array.from(atob(assets.wasm), c => c.charCodeAt(0));
+    const wasm = wasmModule ? null : Uint8Array.from(atob(assets.wasm), c => c.charCodeAt(0));
     const url = URL.createObjectURL(new Blob([assets.worker], { type: 'text/javascript' }));
     worker = new Worker(url); URL.revokeObjectURL(url); controls();
     const result = await new Promise((resolve, reject) => {
       worker.onmessage = ({ data }) => data.error ? reject(new Error(data.error)) : resolve(data);
       worker.onerror = event => reject(new Error(event.message || 'Structure detection failed'));
-      worker.postMessage({ input: { text: input.text, pages: input.pages }, profile: Number(profile.value), wasm }, [wasm.buffer]);
+      worker.postMessage({ input: { text: input.text, pages: input.pages }, profile: Number(profile.value), wasm, module: wasmModule }, wasm ? [wasm.buffer] : []);
     });
     if (token !== generation) return;
+    wasmModule = result.module;
     if (result.offset_unit !== 'utf16') throw new Error('Unsupported structure coordinates');
     record.entries = outlineEntries(result.nodes, input.lines); record.profile = profile.value;
     await persist(record);

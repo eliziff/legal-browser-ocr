@@ -47,7 +47,7 @@ version = "0.1.0"
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-structure",
- "legal-structure 0.1.0 (git+https://github.com/eliziff/legal-structure-parser.git?rev=f73bcd5d66575c0504e97fc2c3b95bf5589377e5)",
+ "legal-structure",
  "serde",
  "serde_json",
 ]
@@ -167,23 +167,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "legal-grammar-tables"
-version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-structure-parser.git?rev=f73bcd5d66575c0504e97fc2c3b95bf5589377e5#f73bcd5d66575c0504e97fc2c3b95bf5589377e5"
-dependencies = [
- "fancy-regex",
- "regex",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "legal-pdf-core"
 version = "0.1.0"
 source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=3a9fd6617a298aee9bffebde4d254454638312ad#3a9fd6617a298aee9bffebde4d254454638312ad"
 dependencies = [
  "flate2",
- "legal-structure 0.1.0 (git+https://github.com/eliziff/legal-structure-parser.git?rev=3eb592b2684e4ad879f2cb2ac95eaea3158e47bc)",
+ "legal-structure",
  "serde",
  "serde_json",
  "sha2",
@@ -197,7 +186,7 @@ source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=3a9fd6617a298a
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-support",
- "legal-structure 0.1.0 (git+https://github.com/eliziff/legal-structure-parser.git?rev=3eb592b2684e4ad879f2cb2ac95eaea3158e47bc)",
+ "legal-structure",
  "regex",
  "serde_json",
 ]
@@ -210,7 +199,7 @@ dependencies = [
  "legal-pdf-core",
  "legal-pdf-pairing",
  "legal-pdf-support",
- "legal-structure 0.1.0 (git+https://github.com/eliziff/legal-structure-parser.git?rev=3eb592b2684e4ad879f2cb2ac95eaea3158e47bc)",
+ "legal-structure",
  "regex",
  "serde_json",
 ]
@@ -221,7 +210,7 @@ version = "0.1.0"
 source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=3a9fd6617a298aee9bffebde4d254454638312ad#3a9fd6617a298aee9bffebde4d254454638312ad"
 dependencies = [
  "legal-pdf-core",
- "legal-structure 0.1.0 (git+https://github.com/eliziff/legal-structure-parser.git?rev=3eb592b2684e4ad879f2cb2ac95eaea3158e47bc)",
+ "legal-structure",
  "regex",
  "serde",
  "serde_json",
@@ -235,21 +224,7 @@ version = "0.1.0"
 source = "git+https://github.com/eliziff/legal-structure-parser.git?rev=3eb592b2684e4ad879f2cb2ac95eaea3158e47bc#3eb592b2684e4ad879f2cb2ac95eaea3158e47bc"
 dependencies = [
  "aho-corasick",
- "legal-grammar-tables 0.1.0 (git+https://github.com/eliziff/legal-structure-parser.git?rev=3eb592b2684e4ad879f2cb2ac95eaea3158e47bc)",
- "regex",
- "serde",
- "serde_json",
- "sha2",
- "unicode-normalization",
-]
-
-[[package]]
-name = "legal-structure"
-version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-structure-parser.git?rev=f73bcd5d66575c0504e97fc2c3b95bf5589377e5#f73bcd5d66575c0504e97fc2c3b95bf5589377e5"
-dependencies = [
- "aho-corasick",
- "legal-grammar-tables 0.1.0 (git+https://github.com/eliziff/legal-structure-parser.git?rev=f73bcd5d66575c0504e97fc2c3b95bf5589377e5)",
+ "legal-grammar-tables",
  "regex",
  "serde",
  "serde_json",
