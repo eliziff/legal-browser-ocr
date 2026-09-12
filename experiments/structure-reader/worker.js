@@ -1,7 +1,7 @@
 self.onmessage = async ({ data }) => {
   try {
-    const bytes = new TextEncoder().encode(data.text);
-    if (bytes.length > 4_000_000) throw new Error('This experiment supports up to 4 MB of OCR text.');
+    const bytes = new TextEncoder().encode(JSON.stringify(data.input));
+    if (bytes.length > 4_000_000) throw new Error('This experiment supports up to 4 MB of OCR data.');
     const { instance } = await WebAssembly.instantiate(data.wasm);
     const api = instance.exports, ptr = api.allocate(bytes.length);
     let result;

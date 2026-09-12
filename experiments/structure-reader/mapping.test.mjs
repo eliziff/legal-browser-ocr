@@ -22,9 +22,15 @@ test('the pinned WASM engine detects actual agreement sections', async () => {
   const wasm = readFileSync(new URL('./target/wasm32-unknown-unknown/release/browser_structure.wasm', import.meta.url));
   const { instance: { exports: api } } = await WebAssembly.instantiate(wasm);
   const text = '1. Definitions\nThis agreement defines the terms.\n2. Payment\nThe buyer shall pay the price.\n3. Termination\nEither party may terminate.\n';
-  const bytes = new TextEncoder().encode(text), ptr = api.allocate(bytes.length);
+  const line = (text, y, height = 20) => ({ text, x: 50, y, width: 400, height });
+  const payload = { text, pages: [{ width: 600, height: 800, lines: [
+    line('1. Definitions', 80, 32), line('This agreement defines the terms.', 130),
+    line('2. Payment', 180, 32), line('The buyer shall pay the price.', 230),
+    line('3. Termination', 280, 32), line('Either party may terminate.', 330),
+  ] }] };
+  const bytes = new TextEncoder().encode(JSON.stringify(payload)), ptr = api.allocate(bytes.length);
   new Uint8Array(api.memory.buffer, ptr, bytes.length).set(bytes);
-  const packed = api.detect(ptr, bytes.length, 2);
+  const packed = api.detect(ptr, bytes.length, 0);
   const output = Number(packed & 0xffffffffn), length = Number(packed >> 32n);
   const result = JSON.parse(new TextDecoder().decode(new Uint8Array(api.memory.buffer, output, length)));
   api.release(output, length); api.release(ptr, bytes.length);

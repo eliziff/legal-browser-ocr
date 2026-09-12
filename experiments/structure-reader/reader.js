@@ -11,21 +11,26 @@ style.textContent = pdfStyles + styles; document.head.append(style);
 document.body.classList.add('structure-app');
 const panel = document.createElement('section'); panel.id = 'structure-reader';
 panel.innerHTML = `<nav class="recent-pdfs" aria-label="Recent PDFs"></nav>
+<button type="button" id="open-history" class="secondary compact">History</button>
 <p id="structure-status" role="status">Processed PDFs will appear here and be remembered in this browser.</p>
 <p id="storage-status" role="status"></p>
 <div class="reader-body" hidden>
-  <details class="contents" open><summary>Contents</summary><nav aria-label="Document contents"></nav></details>
+  <aside class="contents" id="contents-dock"><h2>Contents</h2><nav aria-label="Document contents"></nav></aside>
   <div class="reader-main"><div class="reader-toolbar">
+    <button type="button" id="toggle-contents" class="secondary" aria-controls="contents-dock" aria-expanded="true">Hide contents</button>
     <label>Page <input id="reader-page" type="number" min="1" value="1" aria-label="Page number"> <span id="reader-total"></span></label>
     <label>Zoom <select id="reader-zoom"><option value="page-width">Fit width</option><option value="page-fit">Fit page</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
+    <button type="button" id="reader-fullscreen" class="secondary">Full screen</button>
     <button type="button" id="forget-pdf" class="secondary">Remove from recents</button>
   </div><div class="reader-viewport"><div class="reader-scroll" tabindex="0" aria-label="PDF pages"><div class="pdfViewer"></div></div></div></div>
 </div>`;
+panel.insertAdjacentHTML('beforeend', `<dialog id="history-dialog"><form method="dialog"><header><h2>Recent PDFs</h2><button value="close" class="secondary compact">Close</button></header><div class="history-list"></div></form></dialog>
+<dialog id="remove-dialog"><form method="dialog"><h2>Remove PDF?</h2><p class="remove-message"></p><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button value="confirm" class="danger">Remove PDF</button></div></form></dialog>`);
 const form = document.getElementById('form'); form.after(panel);
 const options = document.createElement('div'); options.className = 'processing-options';
 for (const id of ['file','segmentation','mode']) options.append(document.getElementById(id).closest('label'));
 const profileLabel = document.createElement('label');
-profileLabel.innerHTML = `Document type<select id="structure-profile"><option value="0">Case</option><option value="1">Legislation</option><option value="2">Agreement</option></select>`;
+profileLabel.innerHTML = `Document type<select id="structure-profile"><option value="0">General</option><option value="1">Legislation</option><option value="2">Contract</option></select>`;
 options.append(profileLabel);
 const actions = document.createElement('div'); actions.className = 'processing-actions';
 const button = document.createElement('button'); button.id = 'detect-structure'; button.type = 'button'; button.className = 'secondary'; button.textContent = 'Detect structure';
@@ -40,6 +45,8 @@ const $ = selector => panel.querySelector(selector);
 const profile = document.getElementById('structure-profile'), message = $('#structure-status'), storageMessage = $('#storage-status');
 const body = $('.reader-body'), nav = $('.contents nav'), tabs = $('.recent-pdfs'), scroll = $('.reader-scroll');
 const pageInput = $('#reader-page'), zoom = $('#reader-zoom'), download = document.getElementById('download');
+const historyDialog = $('#history-dialog'), removeDialog = $('#remove-dialog');
+const dockButton = $('#toggle-contents'), fullscreenButton = $('#reader-fullscreen');
 const eventBus = new EventBus(), linkService = new PDFLinkService({ eventBus });
 const viewer = new PDFViewer({ container: scroll, eventBus, linkService, maxCanvasPixels: 8_000_000 });
 linkService.setViewer(viewer);
@@ -61,6 +68,19 @@ function drawTabs() {
     if (record === active) tab.setAttribute('aria-current', 'page');
     tab.onclick = () => { if (record !== active) void openRecord(record); };
     tabs.append(tab);
+  }
+}
+function drawHistory() {
+  const list = $('.history-list'); list.replaceChildren();
+  if (!records.length) { list.textContent = 'No recent PDFs.'; return; }
+  for (const record of records.slice().reverse()) {
+    const row = document.createElement('div'), open = document.createElement('button'), remove = document.createElement('button');
+    row.className = 'history-row'; open.type = remove.type = 'button';
+    open.className = 'history-open secondary'; open.textContent = record.name;
+    open.onclick = () => { historyDialog.close(); if (record !== active) void openRecord(record); };
+    remove.className = 'history-remove secondary compact'; remove.textContent = 'Remove';
+    remove.onclick = () => confirmRemoval(record);
+    row.append(open, remove); list.append(row);
   }
 }
 function drawContents() {
@@ -95,6 +115,35 @@ pageInput.onchange = () => {
 };
 pageInput.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); pageInput.onchange(); } };
 zoom.onchange = () => { viewer.currentScaleValue = zoom.value; };
+$('#open-history').onclick = () => { drawHistory(); historyDialog.showModal(); };
+dockButton.onclick = () => {
+  const collapsed = body.classList.toggle('dock-collapsed');
+  dockButton.textContent = collapsed ? 'Show contents' : 'Hide contents';
+  dockButton.setAttribute('aria-expanded', String(!collapsed));
+  requestAnimationFrame(() => { if (viewer.pdfDocument) viewer.currentScaleValue = zoom.value; });
+};
+fullscreenButton.onclick = () => document.fullscreenElement ? document.exitFullscreen() : panel.requestFullscreen();
+document.addEventListener('fullscreenchange', () => {
+  fullscreenButton.textContent = document.fullscreenElement === panel ? 'Exit full screen' : 'Full screen';
+});
+
+async function removeRecord(record) {
+  try { await forgetDocument(record.id); } catch { storageError(); return; }
+  records = records.filter(item => item !== record); drawHistory();
+  if (record !== active) { drawTabs(); return; }
+  if (records.length) await openRecord(records.at(-1));
+  else {
+    generation++; viewer.setDocument(null); linkService.setDocument(null); await pdfTask?.destroy(); pdfTask = null;
+    active = null; body.hidden = true; drawTabs(); controls(); await rememberActive(null).catch(storageError);
+    message.textContent = 'No recent PDFs. Recognize a document to start reading.';
+  }
+}
+function confirmRemoval(record) {
+  $('.remove-message').textContent = `Remove “${record.name}” from this browser? The downloaded or original file is not affected.`;
+  removeDialog.returnValue = '';
+  removeDialog.onclose = () => { if (removeDialog.returnValue === 'confirm') void removeRecord(record); };
+  removeDialog.showModal();
+}
 
 async function openRecord(record) {
   const token = ++generation; worker?.terminate(); worker = null;
@@ -145,7 +194,7 @@ button.onclick = async () => {
     const result = await new Promise((resolve, reject) => {
       worker.onmessage = ({ data }) => data.error ? reject(new Error(data.error)) : resolve(data);
       worker.onerror = event => reject(new Error(event.message || 'Structure detection failed'));
-      worker.postMessage({ text: input.text, profile: Number(profile.value), wasm }, [wasm.buffer]);
+      worker.postMessage({ input: { text: input.text, pages: input.pages }, profile: Number(profile.value), wasm }, [wasm.buffer]);
     });
     if (token !== generation) return;
     if (result.offset_unit !== 'utf16') throw new Error('Unsupported structure coordinates');
@@ -164,16 +213,7 @@ download.onclick = () => {
   link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 };
 $('#forget-pdf').onclick = async () => {
-  if (!active) return;
-  const record = active;
-  try { await forgetDocument(record.id); } catch { storageError(); return; }
-  records = records.filter(item => item !== record);
-  if (records.length) await openRecord(records.at(-1));
-  else {
-    generation++; viewer.setDocument(null); linkService.setDocument(null); await pdfTask?.destroy(); pdfTask = null;
-    active = null; body.hidden = true; drawTabs(); controls(); await rememberActive(null).catch(storageError);
-    message.textContent = 'No recent PDFs. Recognize a document to start reading.';
-  }
+  if (active) confirmRemoval(active);
 };
 controls();
 try {

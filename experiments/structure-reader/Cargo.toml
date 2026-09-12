@@ -13,6 +13,9 @@ path = "engine.rs"
 [dependencies]
 legal-structure = { git = "https://github.com/eliziff/legal-structure-parser.git", rev = "f73bcd5d66575c0504e97fc2c3b95bf5589377e5", features = ["provider-text"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+legal-pdf-core = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "3a9fd6617a298aee9bffebde4d254454638312ad" }
+legal-pdf-structure = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "3a9fd6617a298aee9bffebde4d254454638312ad" }
 
 [profile.release]
 opt-level = "s"

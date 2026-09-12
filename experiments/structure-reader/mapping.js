@@ -9,12 +9,17 @@ export function structureInput(pages) {
     }
     text += '\n'; offset++;
   });
-  return { text, lines };
+  return { text, lines, pages: pages.map(page => ({
+    width: page.width || Math.max(1, ...page.lines.map(line => line.x + line.width)),
+    height: page.height || Math.max(1, ...page.lines.map(line => line.y + line.height)),
+    lines: page.lines,
+  })) };
 }
 
 export function outlineEntries(nodes, lines) {
   const byId = new Map(nodes.map(node => [node.id, node]));
-  return nodes.filter(node => ['heading', 'section'].includes(node.kind)).flatMap(node => {
+  const seen = new Set();
+  return nodes.filter(node => ['heading', 'section'].includes(node.kind) && !seen.has(node.range.start) && seen.add(node.range.start)).flatMap(node => {
     const hit = lines.find(line => line.start <= node.range.start && node.range.start < line.end);
     if (!hit) return [];
     const [a,b,c,d,e,f] = hit.transform, { x,y } = hit.line;

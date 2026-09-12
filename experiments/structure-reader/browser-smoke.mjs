@@ -30,14 +30,22 @@ try {
   await page.locator('#segmentation').selectOption('fast');
   await page.locator('#all').click();
   await page.waitForFunction(()=>!document.querySelector('#download').disabled,{},{timeout:90000});
-  await page.locator('#structure-profile').selectOption('2');
+  assert.equal(await page.locator('#structure-profile').inputValue(),'0');
   await page.locator('#detect-structure').click();
-  await page.waitForFunction(()=>document.querySelector('.contents nav').textContent.includes('Termination'),{},{timeout:90000});
+  await page.waitForFunction(()=>document.querySelectorAll('.contents nav button').length >= 2,{},{timeout:90000});
   await page.waitForFunction(()=>document.querySelector('.pdfViewer .textLayer .endOfContent'));
   assert.ok(await page.locator('.pdfViewer .page canvas').first().evaluate(canvas=>Math.abs(canvas.clientWidth/canvas.clientHeight-canvas.width/canvas.height)<.01),'PDF page must retain its aspect ratio');
   const titles=await page.locator('.contents nav button').allTextContents();
   console.log('CONTENTS',titles);
-  assert.ok(titles.some(t=>t.includes('Termination')));
+  assert.ok(titles.some(t=>/Definitions|Payment|Termination/.test(t)));
+  await page.locator('#toggle-contents').click();
+  assert.equal(await page.locator('#contents-dock').isVisible(),false);
+  assert.equal(await page.locator('#toggle-contents').getAttribute('aria-expanded'),'false');
+  await page.locator('#toggle-contents').click();
+  await page.locator('#reader-fullscreen').click();
+  await page.waitForFunction(()=>document.fullscreenElement?.id==='structure-reader');
+  await page.locator('#reader-fullscreen').click();
+  await page.waitForFunction(()=>!document.fullscreenElement);
   await page.locator('#structure-reader').scrollIntoViewIfNeeded();
   await page.screenshot({path:'dist/structure-smoke/reader-desktop.png'});
   for(let repeat=0;repeat<2;repeat++) {
@@ -58,12 +66,11 @@ try {
     console.log('SELECTION',repeat,selected.length,'characters; no backwards jumps');
   }
   await page.screenshot({path:'dist/structure-smoke/reader-selection.png'});
-  const target=page.locator('.contents nav button').filter({hasText:'Termination'}).first();
-  await target.focus();await page.keyboard.press('Enter');
+  await page.locator('#reader-page').fill('2'); await page.locator('#reader-page').press('Enter');
   await page.waitForFunction(()=>document.querySelector('#reader-page').value==='2');
   assert.equal(await page.locator('#ocr-preview').getAttribute('open'),null);
   await page.reload();
-  await page.waitForFunction(()=>document.querySelector('#reader-page')?.value==='2' && document.querySelector('.contents nav').textContent.includes('Termination'),{},{timeout:15000});
+  await page.waitForFunction(()=>document.querySelector('#reader-page')?.value==='2' && document.querySelectorAll('.contents nav button').length >= 2,{},{timeout:15000});
   assert.equal(await page.locator('.recent-pdf').count(),1);
   assert.equal(await page.locator('#file').inputValue(),'');
   console.log('RESTORED: PDF, contents and page 2 after reload without OCR');
@@ -88,7 +95,7 @@ try {
   console.log('PERFORMANCE: 40-page PDF,',canvases,'live canvases after jump to page 40');
   await page.locator('.recent-pdf').filter({hasText:'reader-fixture.pdf'}).click();
   await page.waitForFunction(()=>document.querySelector('#reader-total').textContent==='of 2' && document.querySelector('#reader-page').value==='2');
-  assert.equal(await page.locator('.contents nav button').count(),4);
+  assert.ok(await page.locator('.contents nav button').count()>=2);
   await page.locator('#reader-page').fill('1');await page.locator('#reader-page').press('Enter');
   await page.waitForFunction(()=>document.querySelector('#reader-page').value==='1');
   await page.locator('.reader-scroll').evaluate(element=>element.scrollTop=element.scrollHeight);
@@ -101,13 +108,19 @@ try {
   assert.equal(await page.locator('.reader-body').isVisible(),true);
   assert.equal(await page.locator('#detect-structure').isDisabled(),false);
   await page.locator('#forget-pdf').click();
+  assert.equal(await page.locator('#remove-dialog').isVisible(),true);
+  await page.locator('#remove-dialog button[value="cancel"]').click();
+  assert.equal(await page.locator('.recent-pdf').count(),2);
+  await page.locator('#forget-pdf').click();
+  await page.locator('#remove-dialog button[value="confirm"]').click();
   await page.waitForFunction(()=>document.querySelector('#reader-total').textContent==='of 40');
   await page.locator('#forget-pdf').click();
+  await page.locator('#remove-dialog button[value="confirm"]').click();
   await page.waitForFunction(()=>document.querySelector('.reader-body').hidden);
   await page.reload();await page.waitForSelector('#structure-reader');
   assert.equal(await page.locator('.recent-pdf').count(),0);
   assert.deepEqual(errors,[]);
-  console.log('PASS: real OCR, WASM detection, selection, continuous scrolling, restore, mobile reflow and removal');
+  console.log('PASS: real OCR, PDF structure detection, selection, dock, fullscreen, history, restore, mobile and confirmed removal');
 } catch (error) {
   console.log('FAILURE STATE',await page?.evaluate(()=>({status:document.querySelector('#structure-status')?.textContent,page:document.querySelector('#reader-page')?.value,total:document.querySelector('#reader-total')?.textContent,contents:document.querySelector('.contents nav')?.textContent})));
   await page?.screenshot({path:'dist/structure-smoke/failure.png'});

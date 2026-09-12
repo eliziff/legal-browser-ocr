@@ -413,7 +413,7 @@ $('all').onclick=async()=>{
         entry.pre.textContent='Recognizing…';
         const result=await recognize(canvas,undefined,true);
         entry.pre.textContent=result.text;
-        results[number-1]={lines:result.lines,transform:page.transform};
+        results[number-1]={lines:result.lines,transform:page.transform,width:canvas.width,height:canvas.height};
       }catch(error){failed++;entry.pre.textContent=`OCR failed: ${error.message}`}
       finally{if(canvas)canvas.width=canvas.height=1}
       done++;status.textContent=`Processed ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;
