@@ -2,8 +2,7 @@
 
 Local PNG/PDF recognition using WebAssembly and ONNX Runtime Web, with crop
 selection, whole-document recognition and searchable PDF export. It is the browser
-companion to [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser), not
-Beaver's server-side PDF parser. Input files and recognized text are processed on
+companion to [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser). Input files and recognized text are processed on
 the device.
 
 ## Use
@@ -52,7 +51,7 @@ npm run bundle   # runtime plus self-contained HTML under dist/
 [package.json](package.json), [build-runtime.mjs](build-runtime.mjs) and
 [build-single-html.mjs](build-single-html.mjs) define the build. Tests cover layout,
 preprocessing, text geometry and PDF export; they do not certify OCR accuracy on
-a new corpus. Do not commit runtime assets or generated release files.
+a new corpus.
 
 ## Recorded performance
 
@@ -68,11 +67,7 @@ assembly—not cold-load or export timings. Lower character error rate is better
 | Tesseract.js Fast, four workers | 1.01 | 4.11% |
 | Tesseract.js Quality, four workers | 0.73 | 4.16% |
 
-## Project ownership and credits
-
-This README owns browser usage and packaging. Cross-project priorities live in
-[Beaver's master plan](https://github.com/eliziff/Beaver/blob/main/docs/roadmap/master-plan.md);
-a Beaver submodule pin need not match this repository's newest commit or release.
+## Credits and license
 
 Recognition uses a legal-domain fine-tune of
 [CATMuS Print Small](https://zenodo.org/records/10602357), trained with
