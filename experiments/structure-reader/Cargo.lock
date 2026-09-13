@@ -450,7 +450,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-core"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450#9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450"
 dependencies = [
  "flate2",
  "legal-structure",
@@ -463,7 +463,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-extraction"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450#9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450"
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-extraction-processor",
@@ -473,7 +473,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-extraction-processor"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450#9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450"
 dependencies = [
  "legal-pdf-core",
  "lopdf",
@@ -486,7 +486,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-ocr"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450#9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450"
 dependencies = [
  "legal-pdf-core",
  "serde",
@@ -497,7 +497,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-pairing"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450#9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450"
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-support",
@@ -509,7 +509,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-structure"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450#9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450"
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-pairing",
@@ -522,7 +522,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-support"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450#9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450"
 dependencies = [
  "image",
  "legal-pdf-core",

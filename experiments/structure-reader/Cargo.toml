@@ -15,17 +15,17 @@ name = "upstream-parity"
 path = "upstream-parity.rs"
 
 [dependencies]
-legal-pdf-extraction = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "0e1196c9ccda26982010561ebd7ee5837f9770be" }
+legal-pdf-extraction = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450" }
 legal-structure = { git = "https://github.com/eliziff/legal-structure-parser.git", rev = "f73bcd5d66575c0504e97fc2c3b95bf5589377e5", features = ["provider-text"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 regex = "1.11"
 image = { version = "0.25", default-features = false }
-legal-pdf-support = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "0e1196c9ccda26982010561ebd7ee5837f9770be", features = ["ppdoc-inference"] }
-legal-pdf-core = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "0e1196c9ccda26982010561ebd7ee5837f9770be" }
-legal-pdf-structure = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "0e1196c9ccda26982010561ebd7ee5837f9770be" }
+legal-pdf-support = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450", features = ["ppdoc-inference"] }
+legal-pdf-core = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450" }
+legal-pdf-structure = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450" }
 
-legal-pdf-ocr = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "0e1196c9ccda26982010561ebd7ee5837f9770be" }
+legal-pdf-ocr = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450" }
 
 [profile.release]
 opt-level = "s"

@@ -15,9 +15,12 @@ are separate browser storage contexts.
 
 ## Reading and detection
 
-Digital PDFs open with their original text and skip OCR. Mixed PDFs retain native
+Picking a file immediately opens a new document tab. Digital PDFs keep their
+original text, skip OCR, and detect structure automatically. Mixed PDFs retain native
 pages and recognize only the pages upstream extraction flags for OCR.
-For scanned PDFs, recognize every page to open a searchable PDF. **Detect structure** adds a
+For scanned PDFs, select or clear a crop in the tab, then recognize the document.
+A progress bar replaces the crop view during recognition; the finished PDF opens
+in that same tab. Crop remains available for reprocessing, including after reload. **Detect structure** adds a
 collapsible Contents dock. General uses native evidence directly for digital PDFs,
 and visual layout regions for OCR; Legislation and
 Contract use the corresponding upstream text parsers. General is the default.
@@ -42,7 +45,7 @@ that already joined or omitted words. Neither option changes the OCR runtime.
 Read continuously, enter a page number, choose a zoom, or enter full screen.
 PDF.js owns text selection and rendering, including its stock text-layer CSS.
 The rendering queue bounds live page canvases, capped at eight million pixels each.
-OCR preview and text collapse after processing or detection.
+Processing does not create page-by-page image/text previews.
 
 Recent PDFs appear as tabs. The tab's x asks before removing its saved PDF;
 History lists saved documents. IndexedDB stores PDFs, OCR geometry and contents;
@@ -71,9 +74,9 @@ The Fast ONNX export is by stefanj0, from the official PaddlePaddle model; Accur
 uses PaddlePaddle's ONNX export. Runtime loading checks each model's SHA-256.
 
 OCR crop geometry is transformed to PDF page coordinates. Unknown font size stays
-unknown: ink-box height is not a font metric. Upstream only receives region
-assignments when every nonblank OCR line matches a region. Otherwise the reader
-reports that model regions were discarded. General's ToC uses only final upstream
+unknown: ink-box height is not a font metric. Matched regions retain their
+evidence even when other lines are uncovered. Uncovered lines keep their original
+evidence; region-dependent rules only admit lines with supplied roles. General's ToC uses only final upstream
 heading nodes and their graph hierarchy. Raw model labels never create ToC entries.
 Legal profiles retain parser sections.
 

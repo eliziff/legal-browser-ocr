@@ -62,7 +62,12 @@ const context = pageCanvas.getContext('2d'), overlayContext = overlay.getContext
 let session, modelBytes, labels, pdf, imageBitmap, crop, cropTemplate, dragStart;
 let sessionPromise;
 let loadedFile = null, ocrPages = null, busy = false, poolError = null;
-let pdfTextProvider, nativePages;
+let pdfTextProvider, nativePages, progress = null, processingError = null, pagePreviews = true;
+export function setPagePreviews(enabled) { pagePreviews = enabled; }
+function reportProgress(completed, total) {
+  progress = { completed, total };
+  window.dispatchEvent(new Event('ocr-state-change'));
+}
 export function setPdfTextProvider(provider) { pdfTextProvider = provider; }
 let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[],poolTaskId=0;
 let tensorScratch = new Float32Array(), lengthsScratch = new BigInt64Array();
@@ -153,7 +158,7 @@ function invalidateOcr() {
   window.dispatchEvent(new Event('ocr-state-change'));
 }
 
-export const getOcrState = () => ({ pages: ocrPages, busy, name: loadedFile?.name, sourceFile: loadedFile });
+export const getOcrState = () => ({ pages: ocrPages, busy, name: loadedFile?.name, sourceFile: loadedFile, progress, error: processingError, crop: cropTemplate });
 export async function searchablePdf() {
   if (busy || !loadedFile || !ocrPages) throw new Error('Recognize every page before opening the PDF');
   const file = loadedFile, pages = ocrPages, isPdf = Boolean(pdf);
@@ -192,11 +197,13 @@ function drawCrop() {
 }
 overlay.addEventListener('pointerdown',e=>{if(busy||!loadedFile)return;invalidateOcr();dragStart=point(e);crop=null;overlay.setPointerCapture(e.pointerId)});
 overlay.addEventListener('pointermove',e=>{if(busy||!dragStart)return;const p=point(e);crop={x:Math.min(p.x,dragStart.x),y:Math.min(p.y,dragStart.y),w:Math.abs(p.x-dragStart.x),h:Math.abs(p.y-dragStart.y)};drawCrop()});
-overlay.addEventListener('pointerup',()=>{if(busy||!dragStart)return;dragStart=null;if(crop&&(crop.w<8||crop.h<8))crop=null;cropTemplate=crop?{x:crop.x/overlay.width,y:crop.y/overlay.height,w:crop.w/overlay.width,h:crop.h/overlay.height}:null;drawCrop();status.textContent=crop?'Crop selected for every page.':'Crop cleared.'});
-$('clear').onclick=()=>{if(busy)return;invalidateOcr();crop=cropTemplate=null;drawCrop()};
+overlay.addEventListener('pointerup',()=>{if(busy||!dragStart)return;dragStart=null;if(crop&&(crop.w<8||crop.h<8))crop=null;cropTemplate=crop?{x:crop.x/overlay.width,y:crop.y/overlay.height,w:crop.w/overlay.width,h:crop.h/overlay.height}:null;drawCrop();status.textContent=crop?'Crop selected for every page.':'Crop cleared.';window.dispatchEvent(new Event('ocr-crop-change'))});
+$('clear').onclick=()=>{if(busy)return;invalidateOcr();crop=cropTemplate=null;drawCrop();window.dispatchEvent(new Event('ocr-crop-change'))};
 
-$('file').onchange = async () => {
-  const file=$('file').files[0];if(!file||busy)return;
+$('file').onchange = () => loadFile($('file').files[0]);
+export async function loadFile(file, selectedCrop = null) {
+  if(!file||busy)return;
+  progress=null;processingError=null;
   setBusy(true);invalidateOcr();loadedFile=null;crop=cropTemplate=dragStart=null;
   $('document').textContent='';text.textContent='';setCanvasSize(1,1);status.textContent='Loading page…';
   try{
@@ -205,14 +212,14 @@ $('file').onchange = async () => {
     // Keep the immutable File, not PDF.js's transferred/detached ArrayBuffer.
     if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf'))pdf=await getDocument({...pdfOptions,data:await file.arrayBuffer()}).promise;
     else imageBitmap=await createImageBitmap(file);
-    await renderPage(1);loadedFile=file;
+    cropTemplate=selectedCrop;await renderPage(1);loadedFile=file;
     if (pdf && pdfTextProvider) nativePages=await pdfTextProvider(file,pdf);
     text.textContent='Drag a crop or recognize the document.';status.textContent='Page 1 ready.';
     if(nativePages?.every(Boolean)) {
       ocrPages=nativePages;text.textContent=nativePages[0].lines.map(line=>line.text).join('\n');
       status.textContent='Original PDF text ready. OCR skipped.';
     }
-  }catch(error){status.textContent=`Could not load file: ${error.message}`}
+  }catch(error){processingError=error.message;status.textContent=`Could not load file: ${error.message}`}
   finally{setBusy(false)}
 };
 
@@ -402,16 +409,17 @@ async function documentCanvas(number){
 
 $('all').onclick=async()=>{
   if(busy||!loadedFile)return;
-  setBusy(true);invalidateOcr();
+  processingError=null;progress=null;setBusy(true);invalidateOcr();
   const target=$('document');target.textContent='';text.textContent='Waiting…';
   const count=pdf?.numPages||1,started=performance.now(),results=new Array(count);
-  const entries=[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{
+  const entries=pagePreviews?[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{
     const pair=document.createElement('article');pair.className='pair';
     const img=document.createElement('img');img.alt=`Page ${index+2}`;
     const copy=document.createElement('div');copy.className='text';
     const pre=document.createElement('pre');pre.textContent='Waiting…';
     copy.append(pre);pair.append(img,copy);target.append(pair);return{img,pre};
-  })];
+  })]:Array.from({length:count},()=>({pre:{textContent:""}}));
+  reportProgress(0,count);
   let next=1,done=0,failed=0;
   const runner=async()=>{
     while(next<=count){
@@ -428,9 +436,10 @@ $('all').onclick=async()=>{
         entry.pre.textContent=result.text;
         results[number-1]={lines:result.lines,transform:page.transform,width:canvas.width,height:canvas.height};
         }
-      }catch(error){failed++;entry.pre.textContent=`OCR failed: ${error.message}`}
+      }catch(error){failed++;processingError=error.message;entry.pre.textContent=`OCR failed: ${error.message}`}
       finally{if(canvas)canvas.width=canvas.height=1}
       done++;status.textContent=`Processed ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;
+      reportProgress(done,count);
       await new Promise(requestAnimationFrame);
     }
   };

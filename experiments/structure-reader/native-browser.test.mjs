@@ -20,8 +20,9 @@ try {
   });
   assert.deepEqual(saved.bytes,Array.from(readFileSync('dist/pipeline-parity/native.pdf')));
   assert.deepEqual(saved.sources,['native','native']);
-  await page.locator('#detect-structure').click();
-  await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
+  await page.waitForFunction(()=>document.querySelectorAll('.contents nav button').length>0 && !document.querySelector('#detect-structure').disabled);
+  assert.equal(await page.locator('.recent-pdf').count(),1);
+  assert.equal(await page.locator('#document-progress').isVisible(),false);
   assert.ok(await page.locator('.contents nav button').count()>0);
   assert.deepEqual(await page.evaluate(()=>globalThis.layoutRequests),[]);
   console.log('PASS: offline native PDF keeps original bytes and uses native structure without model inference');
@@ -42,7 +43,7 @@ try {
   await page.waitForFunction(()=>document.querySelector('#status').textContent==='Page 1 ready.',{},{timeout:90000});
   await page.locator('#segmentation').selectOption('fast');
   await page.locator('#all').click();
-  await page.waitForFunction(()=>document.querySelectorAll('.recent-pdf').length===2,{},{timeout:180000});
+  await page.waitForFunction(()=>document.querySelectorAll('.recent-pdf').length===2 && !document.querySelector('#download').disabled,{},{timeout:180000});
   const mixed=await page.evaluate(async()=>{
     const db=await new Promise(resolve=>{const r=indexedDB.open('legal-ocr-recent-pdfs');r.onsuccess=()=>resolve(r.result);});
     const records=await new Promise(resolve=>{const r=db.transaction('documents').objectStore('documents').getAll();r.onsuccess=()=>resolve(r.result);});
@@ -52,4 +53,22 @@ try {
   assert.equal(mixed.sources[0],'native');assert.notEqual(mixed.sources[1],'native');
   assert.ok(mixed.lines.every(count=>count>0));assert.ok(mixed.text.includes('Payment'));
   console.log('PASS: mixed PDF retains native page evidence and recognizes the scanned page');
+  await page.locator('.recent-pdf').filter({hasText:'native.pdf'}).click();
+  await page.waitForFunction(()=>!document.querySelector('#edit-crop').disabled);
+  await page.locator('#edit-crop').click();
+  await page.waitForFunction(()=>!document.querySelector('#file').disabled);
+  const box=await page.locator('#overlay').boundingBox();
+  await page.mouse.move(box.x+box.width*.1,box.y+box.height*.1);await page.mouse.down();
+  await page.mouse.move(box.x+box.width*.9,box.y+box.height*.9);await page.mouse.up();
+  await page.getByRole('button',{name:'Back to PDF'}).click();
+  await page.reload();
+  await page.waitForFunction(()=>!document.querySelector('#edit-crop')?.disabled);
+  await page.locator('#edit-crop').click();
+  await page.waitForFunction(()=>!document.querySelector('#file').disabled);
+  assert.ok(await page.locator('#overlay').evaluate(c=>c.getContext('2d').getImageData(c.width/2,c.height/2,1,1).data[3]>0));
+  await page.locator('#clear').click();
+  assert.equal(await page.locator('#overlay').evaluate(c=>c.getContext('2d').getImageData(c.width/2,c.height/2,1,1).data[3]),0);
+  assert.equal(await page.locator('.recent-pdf').count(),2);
+  console.log('PASS: crop belongs to its document, survives reload and clears without creating extra tabs');
+
 } finally {await browser.close();}

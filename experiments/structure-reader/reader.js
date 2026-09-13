@@ -1,7 +1,7 @@
 import { getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import { EventBus, PDFViewer, PDFLinkService } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import pdfStyles from 'pdfjs-dist/web/pdf_viewer.css';
-import { getOcrState, searchablePdf, pdfOptions, setPdfTextProvider } from '../../app.js';
+import { getOcrState, searchablePdf, pdfOptions, setPdfTextProvider, setPagePreviews, loadFile } from '../../app.js';
 import { createSearchablePdf, sourcePdfBytes } from '../../pdf-export.js';
 import { cropToPdfTransform } from '../../text-layer.js';
 import { structureInput, outlineEntries } from './mapping.js';
@@ -18,6 +18,8 @@ panel.innerHTML = `<div class="reader-tabs"><nav class="recent-pdfs" aria-label=
 <button type="button" id="open-history" class="secondary compact">History</button></div>
 <p id="structure-status" role="status">Processed PDFs will appear here and be remembered in this browser.</p>
 <p id="storage-status" role="status"></p>
+<div class="document-actions"><button type="button" id="edit-crop" class="secondary">Crop</button></div>
+<div id="document-progress" hidden><label for="processing-progress" id="processing-label" role="status">Opening PDF…</label><progress id="processing-progress"></progress></div>
 <div class="reader-body" hidden>
   <aside class="contents" id="contents-dock"><h2>Contents</h2><nav aria-label="Document contents"></nav></aside>
   <div class="reader-main"><div class="reader-toolbar">
@@ -42,12 +44,15 @@ options.append(regioningLabel);
 const regioning = regioningLabel.querySelector('select');
 const actions = document.createElement('div'); actions.className = 'processing-actions';
 const button = document.createElement('button'); button.id = 'detect-structure'; button.type = 'button'; button.className = 'secondary'; button.textContent = 'Detect structure';
-actions.append(document.getElementById('all'), button, document.getElementById('download'), document.getElementById('clear'));
+actions.append(button, document.getElementById('download'));
 form.append(options, actions);
 const preview = document.createElement('details'); preview.id = 'ocr-preview'; preview.open = true;
-preview.innerHTML = '<summary>OCR preview and text</summary>';
+preview.innerHTML = '<summary>Crop pages</summary><p>Drag a rectangle to recognize the same area on every page.</p><div class="crop-actions"></div>';
 document.querySelector('.workspace').before(preview);
-preview.append(document.querySelector('.workspace'), document.getElementById('document'));
+preview.append(document.getElementById('status'), document.querySelector('.workspace'), document.getElementById('document'));
+preview.querySelector('.crop-actions').append(document.getElementById('all'), document.getElementById('clear'));
+panel.querySelector('.document-actions').after(preview);
+preview.hidden=true;setPagePreviews(false);
 
 const $ = selector => panel.querySelector(selector);
 const profile = document.getElementById('structure-profile'), message = $('#structure-status'), storageMessage = $('#storage-status');
@@ -59,7 +64,16 @@ const eventBus = new EventBus(), linkService = new PDFLinkService({ eventBus });
 const viewer = new PDFViewer({ container: scroll, eventBus, linkService, maxCanvasPixels: 8_000_000, enableSelectionRendering: false });
 linkService.setViewer(viewer);
 let records = [], active = null, pdfTask, worker, opening = false, generation = 0, lastOcrPages;
-let wasmModule;
+let wasmModule, pendingRecord;
+const progressView=$('#document-progress'), progressBar=$('#processing-progress'), progressLabel=$('#processing-label'), cropButton=$('#edit-crop');
+// ponytail: one document processes at a time, matching the OCR controller.
+const processing = () => Boolean(pendingRecord && ['loading','loading-crop','recognizing','preparing'].includes(pendingRecord.phase));
+function showProgress(label, progress) {
+  progressView.hidden=false;body.hidden=true;preview.hidden=true;progressLabel.textContent=label;
+  if(progress?.total){progressBar.max=progress.total;progressBar.value=progress.completed;}else progressBar.removeAttribute('value');
+  if(active) { const tab=tabs.querySelector('[aria-current]'); if(tab)tab.textContent=active.name+' · '+(progress?.total?Math.round(progress.completed/progress.total*100)+'%':label); }
+}
+
 function pageEvidence(page,viewport) {
   return {source:page.source,width:page.width,height:page.height,transform:cropToPdfTransform(viewport.transform,{x:0,y:0,w:viewport.width,h:viewport.height},page.width,page.height),
     lines:page.lines.map(line=>({id:line.id,text:line.text,x:line.bbox[0],y:line.bbox[1],width:line.bbox[2]-line.bbox[0],height:line.bbox[3]-line.bbox[1]}))};
@@ -82,21 +96,26 @@ setPdfTextProvider(async (file,pdf)=>{
 });
 const preparedText = new WeakSet();
 const storageError = () => { storageMessage.textContent = 'Could not remember PDFs in this browser. You can still read and download them in this session.'; };
-const persist = record => rememberDocument(record).catch(storageError);
+const persist = record => { const {phase,autoStructure,...saved}=record; return rememberDocument(saved).catch(storageError); };
 
 profile.addEventListener('change', controls);
 function controls() {
-  button.disabled = opening || Boolean(worker) || !active?.ocrPages;
-  profile.disabled = opening || Boolean(worker);
-  regioning.disabled = opening || Boolean(worker) || profile.value !== '0' || active?.ocrPages?.every(page => page.source === 'native');
-  download.disabled = opening || !active;
+  button.disabled = processing() || opening || Boolean(worker) || !active?.ocrPages;
+  profile.disabled = processing() || opening || Boolean(worker);
+  regioning.disabled = processing() || opening || Boolean(worker) || profile.value !== '0' || active?.ocrPages?.every(page => page.source === 'native');
+  backToPdf.hidden=!active?.blob;
+  download.disabled = processing() || opening || !active?.blob;
+  cropButton.disabled = processing() || opening || Boolean(worker) || !active?.sourceFile;
+  $('#open-history').disabled = opening || processing() || Boolean(worker);
+  document.getElementById('file').disabled = opening || processing() || Boolean(worker) || getOcrState().busy;
+  for(const tab of tabs.querySelectorAll('button')) tab.disabled=processing() || Boolean(worker);
 }
 function drawTabs() {
   tabs.replaceChildren();
   for (const record of records) {
     const item = document.createElement('span'), tab = document.createElement('button'), close = document.createElement('button');
     item.className = 'recent-tab'; tab.type = close.type = 'button'; tab.className = 'recent-pdf';
-    tab.textContent = record.name; tab.title = record.name;
+    tab.textContent = record.name; tab.title = record.name; tab.disabled=close.disabled=processing() || Boolean(worker);
     close.className = 'close-tab'; close.textContent = '×'; close.setAttribute('aria-label', `Remove ${record.name} from recents`);
     close.onclick = () => confirmRemoval(record);
     if (record === active) { tab.setAttribute('aria-current', 'page'); item.classList.add('active'); }
@@ -137,6 +156,7 @@ eventBus.on('pagesinit', () => {
   viewer.currentPageNumber = Math.min(active.page || 1, viewer.pagesCount);
   pageInput.max = viewer.pagesCount; $('#reader-total').textContent = `of ${viewer.pagesCount}`;
   opening = false; controls();
+  if(active.autoStructure){delete active.autoStructure;showProgress('Finding sections…');void button.onclick().finally(()=>{progressView.hidden=true;body.hidden=false;drawTabs();});}
 });
 eventBus.on('pagechanging', ({ pageNumber }) => {
   pageInput.value = pageNumber;
@@ -163,6 +183,8 @@ document.addEventListener('fullscreenchange', () => {
 
 async function removeRecord(record) {
   try { await forgetDocument(record.id); } catch { storageError(); return; }
+  if(pendingRecord===record)pendingRecord=null;
+  if(record===active){preview.hidden=true;progressView.hidden=true;}
   records = records.filter(item => item !== record); drawHistory();
   if (record !== active) { drawTabs(); return; }
   if (records.length) await openRecord(records.at(-1));
@@ -182,6 +204,8 @@ function confirmRemoval(record) {
 
 async function openRecord(record) {
   const token = ++generation; worker?.terminate(); worker = null;
+  progressView.hidden=true;preview.hidden=true;body.hidden=true;
+  if(!record.blob){active=record;opening=false;drawTabs();drawContents();controls();await cropButton.onclick();return;}
   if (record.structureRevision !== globalThis.LEGAL_STRUCTURE_ASSETS.revision) {
     record.entries = []; record.structureStatus = '';
   }
@@ -210,18 +234,48 @@ async function openRecord(record) {
   }
 }
 
+document.getElementById('file').addEventListener('change', () => {
+  const file=document.getElementById('file').files[0];if(!file||processing()||getOcrState().busy)return;
+  const record={id:crypto.randomUUID(),name:file.name,sourceFile:file,entries:[],profile:profile.value,regioning:regioning.value,page:1,phase:'loading'};
+  pendingRecord=active=record;records.push(record);drawTabs();controls();showProgress('Opening document…');
+}, {capture:true});
+cropButton.onclick=async()=>{
+  if(cropButton.disabled)return;
+  pendingRecord=active;pendingRecord.phase='editing';
+  const state=getOcrState();
+  if(state.sourceFile!==active.sourceFile){
+    pendingRecord.phase='loading-crop';showProgress('Opening crop view…');
+    await loadFile(active.sourceFile,active.crop);
+    pendingRecord.phase='editing';
+  }
+  progressView.hidden=true;body.hidden=true;preview.hidden=false;preview.open=true;controls();
+};
+const backToPdf=document.createElement('button');backToPdf.type='button';backToPdf.className='secondary';backToPdf.textContent='Back to PDF';preview.querySelector('.crop-actions').append(backToPdf);
+backToPdf.onclick=()=>{preview.hidden=true;body.hidden=false;pendingRecord=null;viewer.currentScaleValue=zoom.value;controls();};
+window.addEventListener('ocr-crop-change',()=>{if(pendingRecord?.phase==='editing'){pendingRecord.crop=getOcrState().crop;if(pendingRecord.blob)void persist(pendingRecord);}});
 window.addEventListener('ocr-state-change', () => {
-  const state = getOcrState(); controls();
-  if (!state.busy && state.pages && state.pages !== lastOcrPages) {
-    lastOcrPages = state.pages;
-    void (async () => {
-      message.textContent = 'Preparing searchable PDF…';
+  const state=getOcrState(), record=pendingRecord;
+  if(!record){controls();return;}
+  if(state.busy && record.phase==='editing') {record.phase='recognizing';record.crop=state.crop;drawTabs();}
+  controls();
+  if(state.busy){
+    if(record.phase==='recognizing')showProgress(state.progress?`Recognizing pages · ${state.progress.completed} of ${state.progress.total}`:'Recognizing document…',state.progress);
+    return;
+  }
+  if(record.phase==='loading-crop')return;
+  if(state.error){record.phase='editing';progressView.hidden=true;preview.hidden=false;preview.open=true;message.textContent=`Could not process document: ${state.error}. Try again.`;drawTabs();controls();return;}
+  if(record.phase==='loading'&&!state.pages){record.phase='editing';progressView.hidden=true;preview.hidden=false;preview.open=true;message.textContent='Crop pages if needed, then recognize the document.';drawTabs();controls();return;}
+  if(state.pages && state.pages!==lastOcrPages && ['loading','recognizing'].includes(record.phase)) {
+    lastOcrPages=state.pages;record.phase='preparing';showProgress('Preparing PDF…');controls();
+    void (async()=>{
       try {
-        const bytes = await searchablePdf();
-        const record = { id: crypto.randomUUID(), name: state.name, blob: new Blob([bytes], { type: 'application/pdf' }),
-          ocrPages: state.pages, sourceBlob: state.sourceFile?.type==='application/pdf'?state.sourceFile:null, entries: [], profile: profile.value, page: 1 };
-        preparedText.add(record); records.push(record); await persist(record); await openRecord(record);
-      } catch (error) { message.textContent = `Could not open searchable PDF: ${error.message}`; }
+        const bytes=await searchablePdf();
+        Object.assign(record,{blob:new Blob([bytes],{type:'application/pdf'}),ocrPages:state.pages,
+          sourceBlob:record.sourceFile.type==='application/pdf'||record.name.toLowerCase().endsWith('.pdf')?record.sourceFile:null,
+          entries:[],structureRevision:null,structureStatus:''});
+        delete record.phase;pendingRecord=null;preparedText.add(record);await persist(record);
+        record.autoStructure=record.ocrPages.every(page=>page.source==='native');await openRecord(record);
+      } catch(error){record.phase='editing';progressView.hidden=true;preview.hidden=false;preview.open=true;message.textContent=`Could not prepare PDF: ${error.message}`;controls();}
     })();
   }
 });
@@ -276,7 +330,7 @@ button.onclick = async () => {
     record.structureRevision = assets.revision;
     const missing = result.diagnostics?.find(diagnostic=>diagnostic.code==='PPDOC_LAYOUT_INCOMPLETE')?.line_ids?.length || 0;
     record.structureStatus = missing
-      ? `Layout did not cover ${missing} lines, so its regions were discarded. ${record.entries.length} headings found from text. ${regioning.value === 'fast' ? 'Try Accurate for more coverage.' : 'Review the contents against the PDF.'}`
+      ? `${record.entries.length} sections detected. Some text regions were not identified.`
       : record.entries.length ? `${record.entries.length} sections detected. Review against the PDF.` : 'No sections detected. You can still scroll and read the PDF.';
     if (result.layouts) {
       record.layoutCache ??= {};
@@ -300,6 +354,7 @@ dockButton.classList.add('active');
 controls();
 try {
   const [saved, id] = await Promise.all([recentDocuments(), activeDocument()]);
-  records = saved; drawTabs();
+  for(const record of saved)record.sourceFile??=record.sourceBlob;
+  records = [...saved,...records]; drawTabs();
   if (records.length && !active) await openRecord(records.find(record => record.id === id) || records.at(-1));
 } catch { storageError(); }

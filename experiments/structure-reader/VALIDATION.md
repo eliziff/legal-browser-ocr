@@ -1,4 +1,30 @@
-# Candidate validation ? September 13, 2026
+# Candidate validation - September 13, 2026
+
+Current upstream pin: `9d74fcfd0e449fc4fdc6d8e16a9ddbbc360ce450`.
+Matched layout regions now survive partial coverage. The structure engine consumes
+only supplied roles; missing roles no longer invalidate other lines. The captured
+Fast fixture now retains Definitions, Payment and Termination (previously zero).
+Accurate retains all four expected headings. Native and WASM outputs match exactly.
+
+The candidate passed 65 upstream structure tests, 21 support tests, all 13 frozen
+native products (711 pages), and seven independent source-gold checks. No baselines
+were regenerated. The browser's 12 native/WASM pipeline checks and 22 base OCR/export
+tests passed. OCR inference and heading grammar are unchanged.
+
+New document tabs contain crop controls before recognition, progress while running,
+and the finished PDF afterward. Digital PDFs detect structure automatically.
+Original files and crop coordinates are stored with each finished document.
+Offline browser checks passed for immediate tabs, crop/clear crop, completed-page
+progress, automatic native detection, per-document crop persistence after reload,
+selection, history, fullscreen, mobile layout and confirmed removal. A 40-page
+PDF retained four live canvases after jumping to page 40. Both actual JS-worker
+parity cases passed. Base npm build passed.
+
+On the two-page OCR fixture, Accurate took 16.8 seconds and returned four headings;
+Fast took 2.3 seconds and returned three. Cached Accurate derivation took 114 ms.
+These fixture timings are not general throughput guarantees.
+
+## Earlier shared-port validation
 
 Upstream pin: `0e1196c9ccda26982010561ebd7ee5837f9770be`.
 The shared fix retains source headings, forwards OCR markers with missing spaces
@@ -43,8 +69,8 @@ scanned, mixed and rotated PDFs, plus captured Accurate/Fast model output. The
 captured OCR fixture has four independently specified headings and an unwanted
 OCR fragment; raw model labels cannot bypass the final graph.
 
-Fast leaves eight fixture lines uncovered, so upstream discards its layout.
-That refusal is tested explicitly. Accurate covers all four intended headings.
+Fast leaves eight fixture lines uncovered. The current partial-coverage gate
+retains its three supported headings; Accurate covers all four intended headings.
 This does not claim perfect heading detection on arbitrary documents.
 
 Browser checks use offline `file://` HTML. They cover original-byte preservation

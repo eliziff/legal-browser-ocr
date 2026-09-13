@@ -60,7 +60,7 @@ test('captured OCR layout matches upstream and retains independently specified h
   const fastReference=spawnSync(nativeExecutable,[file,ocrFile,layoutFile],{encoding:'utf8',maxBuffer:16*1024*1024});
   assert.equal(fastReference.status,0,fastReference.stderr);
   assert.deepEqual(fast,JSON.parse(fastReference.stdout).detected);
-  assert.deepEqual(fast.nodes.filter(node=>node.kind==='heading'),[]);
+  assert.deepEqual(fast.nodes.filter(node=>node.kind==='heading').map(node=>node.label),['Definitions','Payment','Termination']);
   assert.deepEqual(fast.diagnostics.find(d=>d.code==='PPDOC_LAYOUT_INCOMPLETE').line_ids,fixture.fastUnmatchedLines);
 });
 for(const kind of ['native','ocr','mixed'])test(`${kind}: WASM extraction and graph equal the native upstream APIs`,async()=>{

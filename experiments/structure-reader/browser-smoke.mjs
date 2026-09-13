@@ -26,7 +26,7 @@ const browser=await chromium.launch({headless:true,channel:process.env.SELECTION
 let page;
 try {
   page=await browser.newPage({viewport:{width:1400,height:1000}});
-  await page.addInitScript(()=>{const NativeWorker=Worker;globalThis.structureEvidence=[];globalThis.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',({data})=>{if(data.nodes)globalThis.structureEvidence.push(data);});}};});
+  await page.addInitScript(()=>{const NativeWorker=Worker;globalThis.progressValues=[];window.addEventListener('ocr-state-change',()=>queueMicrotask(()=>{const p=document.querySelector('#processing-progress');if(p?.hasAttribute('value'))globalThis.progressValues.push(p.value)}));globalThis.structureEvidence=[];globalThis.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',({data})=>{if(data.nodes)globalThis.structureEvidence.push(data);});}};});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.route(/^https?:/,route=>route.abort());
   await page.context().setOffline(true);
@@ -35,9 +35,22 @@ try {
   await page.locator('#file').setInputFiles('dist/structure-smoke/reader-fixture.pdf');
   await page.waitForFunction(()=>document.querySelector('#status').textContent==='Page 1 ready.');
   await page.locator('#segmentation').selectOption('fast');
+  assert.equal(await page.locator('.recent-pdf').count(),1);
+  assert.equal(await page.locator('#clear').isVisible(),true);
+  const cropBox=await page.locator('#overlay').boundingBox();
+  await page.mouse.move(cropBox.x+10,cropBox.y+10);await page.mouse.down();
+  await page.mouse.move(cropBox.x+cropBox.width-10,cropBox.y+cropBox.height-10);await page.mouse.up();
+  assert.ok(await page.locator('#overlay').evaluate(c=>c.getContext('2d').getImageData(c.width/2,c.height/2,1,1).data[3]>0));
+  await page.locator('#clear').click();
+  assert.equal(await page.locator('#overlay').evaluate(c=>c.getContext('2d').getImageData(c.width/2,c.height/2,1,1).data[3]),0);
   await page.locator('#all').click();
+  assert.equal(await page.locator('#document-progress').isVisible(),true);
+  await page.screenshot({path:'dist/structure-smoke/progress.png'});
+  assert.equal(await page.locator('#document article').count(),0);
   await page.waitForFunction(()=>!document.querySelector('#download').disabled,{},{timeout:90000});
   assert.equal(await page.locator('#structure-profile').inputValue(),'0');
+  assert.ok((await page.evaluate(()=>globalThis.progressValues)).includes(2),'progress reaches both completed pages');
+  assert.equal(await page.locator('.recent-pdf').count(),1);
   const accurateStarted = performance.now();
   await page.locator('#detect-structure').click();
   await page.waitForFunction(()=>document.querySelectorAll('.contents nav button').length >= 2,{},{timeout:90000});
@@ -68,8 +81,8 @@ try {
   await page.locator('#detect-structure').click();
   await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
   console.log('FAST_LAYOUT_MS',Math.round(performance.now()-fastStarted),'CONTENTS',await page.locator('.contents nav button').allTextContents());
-  assert.deepEqual(await page.locator('.contents nav button').allTextContents(),[]);
-  assert.ok((await page.locator('#structure-status').textContent()).includes('regions were discarded'));
+  assert.deepEqual(await page.locator('.contents nav button').allTextContents(),['Definitions','Payment','Termination']);
+  assert.ok((await page.locator('#structure-status').textContent()).includes('Some text regions were not identified'));
   assert.ok(!(await page.locator('#structure-status').textContent()).includes('Could not detect'));
   const diagnostic = await page.evaluate(async()=>{
     const db=await new Promise(resolve=>{const request=indexedDB.open('legal-ocr-recent-pdfs');request.onsuccess=()=>resolve(request.result)});
@@ -162,7 +175,9 @@ try {
   await page.locator('#reader-zoom').selectOption('page-fit');
   await page.screenshot({path:'dist/structure-smoke/reader-mobile.png'});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.locator('#edit-crop').click();
   await page.locator('#clear').click();
+  await page.getByRole('button',{name:'Back to PDF'}).click();
   assert.equal(await page.locator('.reader-body').isVisible(),true);
   assert.equal(await page.locator('#detect-structure').isDisabled(),false);
   await page.locator('.recent-tab.active .close-tab').click();
