@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +58,7 @@ for (const [kind, directory] of Object.entries({wasmUrl:'wasm',cMapUrl:'cmaps',s
 }
 const pdfOptions = `const pdfData=${JSON.stringify(pdfData)};globalThis.LEGAL_PDF_OPTIONS={useWorkerFetch:false,cMapPacked:true,BinaryDataFactory:class{async fetch({kind,filename}){const data=pdfData[kind]?.[filename];if(!data)throw Error('Missing packaged PDF asset: '+filename);return Uint8Array.fromBase64(data);}}};`;
 const packageDir = fileURLToPath(new URL('dist/legal-browser-ocr-structure/', root));
+rmSync(packageDir, { recursive: true, force: true });
 mkdirSync(packageDir, { recursive: true });
 for (const manifest of ['layout-model.json', 'layout-fast-model.json']) {
   const model = JSON.parse(readFileSync(new URL('assets/' + manifest, import.meta.url), 'utf8'));
