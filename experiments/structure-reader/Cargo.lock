@@ -54,6 +54,7 @@ dependencies = [
  "image",
  "legal-pdf-core",
  "legal-pdf-structure",
+ "legal-pdf-support",
  "legal-structure",
  "regex",
  "serde",

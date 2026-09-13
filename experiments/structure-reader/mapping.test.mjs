@@ -83,3 +83,26 @@ test('upstream region assignments survive derivation and require complete covera
   assert.deepEqual(incomplete.layout_lines, []);
   assert.deepEqual(incomplete.nodes.filter(node => node.kind === 'heading'), []);
 });
+
+test('visual headings retain the upstream grammar hierarchy without font-size guesses', async () => {
+  const wasm = readFileSync(new URL('./target/wasm32-unknown-unknown/release/browser_structure.wasm', import.meta.url));
+  const { instance: { exports: api } } = await WebAssembly.instantiate(wasm);
+  for (const [titles, depths] of [
+    [['I. Main', 'A. First', '1. Details', '2. More', 'B. Second', 'II. End'], [0,1,2,2,1,0]],
+    [['1. Scope', '1.1 Purpose', '1.2 Meaning', '2. Work', '2.1 Delivery'], [0,1,1,0,1]],
+    [['I. Main', 'A practical guide', 'A. First', '1. Details', '2. More', 'II. End'], [0,0,1,2,2,0]],
+  ]) {
+    const lines = titles.map((text,i)=>({text,x:50,y:80+i*60,width:350,height:20}));
+    const input = structureInput([{width:600,height:800,lines,transform:[1,0,0,-1,0,800]}]);
+    input.pages[0].layout = {width:600,height:800,detections:lines.map(line=>({label:'paragraph_title',score:.99,bbox:[45,line.y-3,500,line.y+25]}))};
+    const bytes=new TextEncoder().encode(JSON.stringify(input)),ptr=api.allocate(bytes.length);
+    new Uint8Array(api.memory.buffer,ptr,bytes.length).set(bytes);
+    const packed=api.detect(ptr,bytes.length,0),out=Number(packed&0xffffffffn),len=Number(packed>>32n);
+    const result=JSON.parse(new TextDecoder().decode(new Uint8Array(api.memory.buffer,out,len)));
+    api.release(out,len);api.release(ptr,bytes.length);
+    assert.equal(result.error,undefined);
+    const entries=outlineEntries(result.nodes,input.lines,result.layout_lines,result.heading_levels);
+    assert.deepEqual(entries.map(entry=>entry.title),titles);
+    assert.deepEqual(entries.map(entry=>entry.depth),depths);
+  }
+});

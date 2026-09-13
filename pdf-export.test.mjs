@@ -62,7 +62,7 @@ for (const rotation of [0,90,180,270]) {
         writeFileSync(`${process.env.OCR_TEST_ARTIFACTS}/original-${rotation}.pdf`,original);
         writeFileSync(`${process.env.OCR_TEST_ARTIFACTS}/searchable-${rotation}.pdf`,exported);
       }
-    } finally {await before.destroy();await after.destroy()}
+    } finally {await before.loadingTask.destroy();await after.loadingTask.destroy()}
   });
 }
 
@@ -77,7 +77,7 @@ test('preserves page order, blank pages, and exports afresh without duplicating 
     try{
       assert.equal(pdf.numPages,3);
       for(let i=0;i<3;i++)assert.equal((await allText(await pdf.getPage(i+1))).map(item=>item.str).join(''),['First page','','Third page'][i]);
-    }finally{await pdf.destroy()}
+    }finally{await pdf.loadingTask.destroy()}
   }
   await assert.rejects(createSearchablePdf({pdfBytes:original,pages:pages.slice(1)}),/every page/);
   await assert.rejects(createSearchablePdf({pdfBytes:original,pages:new Array(3)}),/every page/);
@@ -93,8 +93,8 @@ test('PNG export embeds the original image and keeps all Unicode across font sub
     const source=await PDFDocument.create(),image=await source.embedPng(png);
     source.addPage([600,800]).drawImage(image,{x:0,y:0,width:600,height:800});
     const before=await load(await source.save());
-    try{assert.deepEqual(await pixels(await pdf.getPage(1)),await pixels(await before.getPage(1)))}finally{await before.destroy()}
-  }finally{await pdf.destroy()}
+    try{assert.deepEqual(await pixels(await pdf.getPage(1)),await pixels(await before.getPage(1)))}finally{await before.loadingTask.destroy()}
+  }finally{await pdf.loadingTask.destroy()}
 });
 
 test('rejects invalid inputs and broken line geometry', async () => {

@@ -127,3 +127,26 @@ labels are explicit so future model comparisons can use the same evidence.
 
 For the browser checks, install Playwright in your development environment and
 run `npx playwright install chromium` if Chromium is not already available.
+
+## Selection and heading hierarchy update
+
+PDF.js is pinned to 6.3.289, including upstream's removal of its obsolete selection
+workaround on Chromium 148 and later:
+https://github.com/mozilla/pdf.js/commit/ea43bb43fba60cfc69024df91d98d319a787d038
+The viewer, PDF worker, styles, fonts, CMaps and image decoders are packaged together.
+The PDF loader uses the current loading-task cleanup API. OCR computation is unchanged.
+
+General passes the model's heading titles to the pinned upstream enumerator and
+heading-ladder functions. Their nesting levels and explicit dotted-number depths
+are preserved in the ToC; the adapter does not define a new numbering grammar.
+Unknown unnumbered levels remain flat. Titles retain their own numbering, but the
+ToC no longer adds page labels. Clicking a title still navigates to its source.
+Select Detect structure again to calculate levels for a previously saved result.
+
+The mapping/WASM check covers mixed Roman/letter/numeric nesting and dotted
+numbering. With the app running locally, `node experiments/structure-reader/selection-smoke.mjs`
+checks forward/reverse drags, margins, gaps and direction changes, including the
+painted highlight. Set SELECTION_BROWSER to chrome or msedge to test the installed
+browser rather than Playwright's bundled Chromium. These checks did not reproduce
+the intermittent inverted selection reported on the original document; the update
+removes a confirmed upstream incompatibility and the tested selections paint correctly.

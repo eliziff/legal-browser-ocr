@@ -45,7 +45,7 @@ try {
   const titles=await page.locator('.contents nav button').allTextContents();
   console.log('ACCURATE_LAYOUT_MS',Math.round(performance.now()-accurateStarted));
   console.log('CONTENTS',titles);
-  assert.deepEqual(titles,['Definitions · 1','Payment · 1','Termination · 2','Governing Law · 2']);
+  assert.deepEqual(titles,['Definitions','Payment','Termination','Governing Law']);
   const firstLayouts = await page.evaluate(async()=>{
     const db=await new Promise(resolve=>{const request=indexedDB.open('legal-ocr-recent-pdfs');request.onsuccess=()=>resolve(request.result)});
     const records=await new Promise(resolve=>{const request=db.transaction('documents').objectStore('documents').getAll();request.onsuccess=()=>resolve(request.result)});
@@ -64,7 +64,7 @@ try {
   await page.locator('#detect-structure').click();
   await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
   console.log('FAST_LAYOUT_MS',Math.round(performance.now()-fastStarted),'CONTENTS',await page.locator('.contents nav button').allTextContents());
-  assert.deepEqual(await page.locator('.contents nav button').allTextContents(),['Definitions · 1','Payment · 1','Termination · 2']);
+  assert.deepEqual(await page.locator('.contents nav button').allTextContents(),['Definitions','Payment','Termination']);
   assert.ok(!(await page.locator('#structure-status').textContent()).includes('Could not detect'));
   const diagnostic = await page.evaluate(async()=>{
     const db=await new Promise(resolve=>{const request=indexedDB.open('legal-ocr-recent-pdfs');request.onsuccess=()=>resolve(request.result)});

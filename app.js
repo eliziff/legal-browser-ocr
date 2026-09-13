@@ -8,6 +8,7 @@ import { cleanModelText, positionedLines, cropToPdfTransform } from './text-laye
 import { createSearchablePdf } from './pdf-export.js';
 
 const embedded = globalThis.LEGAL_OCR_ASSETS;
+export const pdfOptions = globalThis.LEGAL_PDF_OPTIONS || {};
 const experimental = new URLSearchParams(location.search);
 const bundledLayout = !embedded || Boolean(embedded.layoutCore);
 const workerPoolSize = experimental.has('pool')?Number(experimental.get('pool')):bundledLayout?recognitionWorkers(navigator.hardwareConcurrency):0;
@@ -196,10 +197,10 @@ $('file').onchange = async () => {
   setBusy(true);invalidateOcr();loadedFile=null;crop=cropTemplate=dragStart=null;
   $('document').textContent='';text.textContent='';setCanvasSize(1,1);status.textContent='Loading page…';
   try{
-    if(pdf)await pdf.destroy();pdf=null;imageBitmap?.close();imageBitmap=null;
+    if(pdf)await pdf.loadingTask.destroy();pdf=null;imageBitmap?.close();imageBitmap=null;
     await ready;
     // Keep the immutable File, not PDF.js's transferred/detached ArrayBuffer.
-    if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf'))pdf=await getDocument({data:await file.arrayBuffer()}).promise;
+    if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf'))pdf=await getDocument({...pdfOptions,data:await file.arrayBuffer()}).promise;
     else imageBitmap=await createImageBitmap(file);
     await renderPage(1);loadedFile=file;
     text.textContent='Drag a crop or recognize the document.';status.textContent='Page 1 ready.';

@@ -36,7 +36,29 @@ mod inference {
 mod ppdoc_postprocess {
     include!(env!("LEGAL_BROWSER_POSTPROCESS"));
 }
+mod heading_grammar {
+    use legal_pdf_support::{enumerator_interpretations, parse_heading_ladder};
 
+    pub fn levels(regions: &[(String, String)]) -> serde_json::Value {
+        let candidates = regions.iter().filter_map(|(id, title)| {
+            let token = title.split_whitespace().next()?;
+            let (value, punct) = token.strip_suffix('.').map(|v| (v, "."))
+                .or_else(|| token.strip_suffix(')').map(|v| (v.trim_start_matches('('), ")")))
+                .unwrap_or((token, ""));
+            let mut choices = enumerator_interpretations(value, punct);
+            // Without punctuation, accept only upstream-recognized dotted numbering.
+            if punct.is_empty() { choices.retain(|choice| choice.2 > 0); }
+            (!choices.is_empty()).then_some((id, choices))
+        }).collect::<Vec<_>>();
+        let parsed = parse_heading_ladder(candidates.iter().map(|(_, choices)| choices.as_slice()));
+        serde_json::json!(candidates.iter().zip(parsed.assignments).filter_map(|((id, choices), assignment)| {
+            let level = assignment.level?;
+            // The upstream tokenizer supplies explicit depth for dotted numbers.
+            let explicit = choices.iter().find(|choice| choice.0 == assignment.family)?.2;
+            Some((id.as_str(), if explicit > 0 { explicit - 1 } else { level.saturating_sub(1) }))
+        }).collect::<std::collections::BTreeMap<_, _>>())
+    }
+}
 #[derive(Deserialize)]
 struct BrowserInput { text: String, pages: Vec<BrowserPage> }
 #[derive(Deserialize)]
@@ -105,6 +127,8 @@ fn detect_input(input: BrowserInput, profile: u32) -> serde_json::Value {
         let has_layout = regions.iter().any(Option::is_some);
         let mut pages = pdf_pages(input.pages);
         let mut layout_lines = Vec::new();
+        let mut heading_regions: Vec<(String, String)> = Vec::new();
+        let mut heading_indexes = std::collections::HashMap::new();
         let mut unmatched = Vec::new();
         if has_layout {
             if regions.iter().zip(&pages).any(|(region, page)| region.is_none() && !page.lines.is_empty()) {
@@ -122,6 +146,14 @@ fn detect_input(input: BrowserInput, profile: u32) -> serde_json::Value {
                     let label = regions[index].label.clone();
                     let region_id = format!("{}-ppdoc-r{:04}", page.id, regions[index].raw_index);
                     layout_lines.push(json!({"id": line.id, "region_id": region_id, "region_type": label}));
+                    if matches!(label.as_str(), "paragraph_title" | "heading" | "doc_title") {
+                        let index = *heading_indexes.entry(region_id.clone()).or_insert_with(|| {
+                            heading_regions.push((region_id.clone(), String::new())); heading_regions.len() - 1
+                        });
+                        let title = &mut heading_regions[index].1;
+                        if !title.is_empty() { title.push(' '); }
+                        title.push_str(&line.text);
+                    }
                     pending.push((page_index, line_index, label, region_id));
                 }
             }
@@ -140,6 +172,7 @@ fn detect_input(input: BrowserInput, profile: u32) -> serde_json::Value {
             document_id: "browser-ocr".into(), source_sha256: String::new(),
         }) {
             Ok(output) => json!({"nodes": output.structure_graph.nodes, "offset_unit": output.structure_graph.offset_unit, "layout_lines": layout_lines,
+                "heading_levels": heading_grammar::levels(&heading_regions),
                 "layout_complete": has_layout && unmatched.is_empty(), "unclassified_lines": unmatched}),
             Err(error) => json!({"error": error.to_string()}),
         };

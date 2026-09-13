@@ -1,7 +1,7 @@
 import { getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import { EventBus, PDFViewer, PDFLinkService } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import pdfStyles from 'pdfjs-dist/web/pdf_viewer.css';
-import { getOcrState, searchablePdf } from '../../app.js';
+import { getOcrState, searchablePdf, pdfOptions } from '../../app.js';
 import { structureInput, outlineEntries } from './mapping.js';
 import { recentDocuments, rememberDocument, forgetDocument, activeDocument, rememberActive, rememberPage } from './recent.js';
 import styles from './reader.css';
@@ -99,7 +99,7 @@ function drawContents() {
   if (!active?.entries.length) { nav.textContent = 'Detect structure to find sections.'; return; }
   for (const entry of active.entries) {
     const link = document.createElement('button'); link.type = 'button'; link.className = 'contents-entry';
-    link.textContent = `${entry.title} · ${entry.page}`;
+    link.textContent = entry.title;
     link.style.paddingInlineStart = `${0.5 + Math.min(entry.depth, 5)}rem`;
     link.onclick = () => {
       nav.querySelector('[aria-current]')?.removeAttribute('aria-current'); link.setAttribute('aria-current', 'location');
@@ -169,7 +169,7 @@ async function openRecord(record) {
   try {
     const bytes = await record.blob.arrayBuffer();
     if (token !== generation) return;
-    pdfTask = getDocument({ data: bytes });
+    pdfTask = getDocument({ ...pdfOptions, data: bytes });
     const pdf = await pdfTask.promise;
     if (token !== generation) return;
     body.hidden = false; linkService.setDocument(pdf); viewer.setDocument(pdf);
@@ -240,7 +240,7 @@ button.onclick = async () => {
     if (token !== generation) return;
     wasmModule = result.module;
     if (result.offset_unit !== 'utf16') throw new Error('Unsupported structure coordinates');
-    record.entries = outlineEntries(result.nodes, input.lines, result.layout_lines); record.profile = profile.value;
+    record.entries = outlineEntries(result.nodes, input.lines, result.layout_lines, result.heading_levels); record.profile = profile.value;
     const missing = result.unclassified_lines?.length || 0;
     record.structureStatus = missing
       ? `${record.entries.length} headings found; ${missing} lines unclassified. ${regioning.value === 'fast' ? 'Try Accurate for more coverage.' : 'Review the contents against the PDF.'}`

@@ -27,7 +27,7 @@ export function structureInput(pages, viewports) {
   })) };
 }
 
-export function outlineEntries(nodes, lines, layoutLines) {
+export function outlineEntries(nodes, lines, layoutLines, headingLevels = {}) {
   const byId = new Map(nodes.map(node => [node.id, node]));
   const byLineId = new Map(lines.map(line => [line.id, line]));
   // General navigation follows visual heading regions. Legal profiles use the
@@ -44,7 +44,7 @@ export function outlineEntries(nodes, lines, layoutLines) {
   }
   const entries = [...regions].map(([id, { hit, titles }]) => {
     const [a,b,c,d,e,f] = hit.transform, { x,y } = hit.line;
-    return { id, title: titles.join(' '), page: hit.page, depth: 0, order: hit.start,
+    return { id, title: titles.join(' '), page: hit.page, depth: headingLevels[id] ?? 0, order: hit.start,
       point: [a*x+c*y+e, b*x+d*y+f] };
   });
   entries.push(...candidates.flatMap(node => {
