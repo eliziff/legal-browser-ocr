@@ -27,6 +27,7 @@ try {
  const rects=await page.locator('.textLayer span').evaluateAll(spans=>spans.filter(s=>s.textContent.trim()).map(s=>{const r=s.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,text:s.textContent}}));
  const a=rects[2],b=rects[3];
  async function checkPaint(name) {
+  assert.equal(await page.locator('.drawLayer .selection').count(),0,name+': selection should use the native text highlight');
   const geometry=await page.evaluate(()=>{
    const layer=document.querySelector('.textLayer'),r=layer.getBoundingClientRect(),selection=getSelection();
    const boxes=[];
@@ -51,7 +52,8 @@ try {
     const i=(y*paint.width+x)*4;
     if(pixels[i+2]-pixels[i]>25&&pixels[i+1]>pixels[i]){
      blue++;
-     if(!geometry.boxes.some(r=>x>=r.x-2&&x<=r.right+2&&y>=r.y-2&&y<=r.bottom+2))outside++;
+     // Native selection paints a small trailing space for a selected line break.
+     if(!geometry.boxes.some(r=>x>=r.x-2&&x<=r.right+(r.bottom-r.y)/2&&y>=r.y-2&&y<=r.bottom+2))outside++;
     }
    }
   assert.ok(outside<10,`${name}: ${outside} highlight pixels outside the selected text`);

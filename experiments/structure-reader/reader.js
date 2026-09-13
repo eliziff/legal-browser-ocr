@@ -54,7 +54,7 @@ const pageInput = $('#reader-page'), zoom = $('#reader-zoom'), download = docume
 const historyDialog = $('#history-dialog'), removeDialog = $('#remove-dialog');
 const dockButton = $('#toggle-contents'), fullscreenButton = $('#reader-fullscreen');
 const eventBus = new EventBus(), linkService = new PDFLinkService({ eventBus });
-const viewer = new PDFViewer({ container: scroll, eventBus, linkService, maxCanvasPixels: 8_000_000 });
+const viewer = new PDFViewer({ container: scroll, eventBus, linkService, maxCanvasPixels: 8_000_000, enableSelectionRendering: false });
 linkService.setViewer(viewer);
 let records = [], active = null, pdfTask, worker, opening = false, generation = 0, lastOcrPages;
 let wasmModule;

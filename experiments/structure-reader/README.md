@@ -150,3 +150,5 @@ painted highlight. Set SELECTION_BROWSER to chrome or msedge to test the install
 browser rather than Playwright's bundled Chromium. These checks did not reproduce
 the intermittent inverted selection reported on the original document; the update
 removes a confirmed upstream incompatibility and the tested selections paint correctly.
+
+The reader disables PDF.js's optional selection compositor (enableSelectionRendering: false), using the browser's native text-layer highlight without generated selection overlays.
