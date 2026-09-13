@@ -1,16 +1,17 @@
 ﻿# Browser structure reader
 
-This is a separate experimental edition of legal-browser-ocr. Extract the whole
-package, then run `Start.ps1` on Windows (Node.js required), or `node serve.mjs`.
-Open http://127.0.0.1:8799/. The server only serves static files on loopback;
-OCR, layout inference, PDF viewing and storage all run in your browser. No document
-is uploaded. The bundled models work without external services.
+This is a separate experimental edition of legal-browser-ocr. Open `index.html`
+directly in current Chrome or Edge. It is a self-contained local file: OCR,
+both regioning models, structure WASM, PDF.js and its support files are embedded.
+No server, Node.js installation, or network connection is needed to use it.
+`Start.ps1` is an optional Windows shortcut that opens the same HTML file.
 
-The folder may also be served by a static HTTPS host. Send
-`Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` to enable WASM threads; otherwise
-layout inference uses one thread. Opening index.html directly is insufficient
-for loading the layout model.
+The HTML is about 204 MiB because it includes the Accurate model as well as Fast.
+Only the selected model is decoded for inference. Direct file use runs layout
+inference in one worker thread; OCR keeps its existing optimized runtime.
+Recent PDFs stay in browser storage. Keep the HTML at a stable location and use
+the same browser profile to retain access to that history; HTTP and file history
+are separate browser storage contexts.
 
 ## Reading and detection
 
@@ -152,3 +153,11 @@ the intermittent inverted selection reported on the original document; the updat
 removes a confirmed upstream incompatibility and the tested selections paint correctly.
 
 The reader disables PDF.js's optional selection compositor (enableSelectionRendering: false), using the browser's native text-layer highlight without generated selection overlays.
+
+Export preserves existing PDF text and omits OCR lines where native text already
+covers the same line. Matching is spatial, so a native page stamp does not suppress
+the scanned body. Reopening a saved document rebuilds only our text layer from its
+saved OCR once per session, correcting previously overlapping copies without OCR
+inference. Tests verify unchanged page pixels, mixed scanned/native pages, and
+selection paint during movement. Set SELECTION_EXISTING_TEXT=1 for the overlapping
+text regression fixture. Both browser smoke scripts open the HTML through file://.

@@ -1,7 +1,59 @@
-import { PDFDocument, PDFName, PDFNumber, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFNumber, PDFArray, PDFRawStream, decodePDFRawStream, StandardFonts } from 'pdf-lib';
 import { lineTextMatrix, unicodeHex } from './text-layer.js';
 
 const hexByte = value => value.toString(16).padStart(2, '0').toUpperCase();
+
+// Re-export our own generated layer, never stack another copy on top of it.
+function removeGeneratedText(document) {
+  let removed = false;
+  for (const page of document.getPages()) {
+    const contents = page.node.Contents();
+    if (!(contents instanceof PDFArray)) continue;
+    for (let i = contents.size() - 1; i >= 0; i--) {
+      const stream = contents.lookup(i);
+      if (!(stream instanceof PDFRawStream)) continue;
+      const text = new TextDecoder().decode(decodePDFRawStream(stream).decode());
+      if (text.startsWith('q\nBT\n3 Tr\n0 Tc\n0 Tw\n100 Tz\n0 Ts\n/LegalOCR-')) {
+        contents.remove(i); removed = true;
+      }
+    }
+  }
+  return removed;
+}
+
+async function existingTextPages(bytes, pages) {
+  const { getDocument, Util } = await import('pdfjs-dist/build/pdf.mjs');
+  const task = getDocument({ ...globalThis.LEGAL_PDF_OPTIONS, data: new Uint8Array(bytes).slice() });
+  try {
+    const pdf = await task.promise, result = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i), text = await page.getTextContent();
+      const inverse = Util.inverseTransform(pages[i-1].transform);
+      result.push(text.items.filter(item=>item.str?.trim()).map(item=>{
+        const [a,b,c,d,x,y]=item.transform, length=Math.hypot(a,b);
+        const ascent=text.styles[item.fontName]?.ascent ?? 0.8;
+        const descent=text.styles[item.fontName]?.descent ?? -0.2;
+        const points=[0,item.width].flatMap(w=>[descent,ascent].map(h=>{
+          const point=[x+a*w/length+c*h,y+b*w/length+d*h];Util.applyTransform(point,inverse);return point;
+        }));
+        const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
+        return {x:Math.min(...xs),right:Math.max(...xs),y:Math.min(...ys),bottom:Math.max(...ys)};
+      }));
+      page.cleanup();
+    }
+    return result;
+  } finally { await task.destroy(); }
+}
+
+function coveredByExistingText(line, boxes) {
+  const intervals=boxes.filter(box=>Math.min(line.y+line.height,box.bottom)-Math.max(line.y,box.y)>=Math.min(line.height,box.bottom-box.y)/2)
+    .map(box=>[Math.max(line.x,box.x),Math.min(line.x+line.width,box.right)])
+    .filter(([start,end])=>end>start).sort((a,b)=>a[0]-b[0]);
+  let covered=0,end=-Infinity;
+  for(const [start,right] of intervals){covered+=Math.max(0,right-Math.max(start,end));end=Math.max(end,right);}
+  // Match a line, not a page: a native page stamp must not suppress scanned body text.
+  return covered >= line.width * 0.75;
+}
 
 // Self-contained Type 3 fonts with empty glyph programs: no system font or
 // network asset is needed, and arbitrary OCR Unicode survives copy/search.
@@ -95,8 +147,11 @@ export async function createSearchablePdf({ pdfBytes, pngBytes, pages }) {
       Array.from(pages).some(page => !page || !Array.isArray(page.lines))) {
     throw new Error('Recognize every page successfully before exporting');
   }
-  const glyphs = await createTextFonts(document, pages);
-  document.getPages().forEach((page, index) => addTextLayer(document, page, pages[index], glyphs));
+  const removed = removeGeneratedText(document);
+  const existing = pdfBytes ? await existingTextPages(removed ? await document.save() : pdfBytes, pages) : [];
+  const additions = pages.map((page, index) => ({...page,lines:page.lines.filter(line=>!coveredByExistingText(line,existing[index] || []))}));
+  const glyphs = await createTextFonts(document, additions);
+  document.getPages().forEach((page, index) => addTextLayer(document, page, additions[index], glyphs));
   // Do not flatten, rasterize, resize, rotate, or otherwise rebuild source PDFs.
   return document.save({ updateFieldAppearances: false });
 }

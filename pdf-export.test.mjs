@@ -16,6 +16,38 @@ async function pixels(page) {
   await page.render({canvasContext:context,viewport}).promise;
   return Buffer.from(context.getImageData(0,0,canvas.width,canvas.height).data);
 }
+
+test('keeps existing selectable text once while adding OCR to scanned pages', async () => {
+  const source=await PDFDocument.create();
+  source.addPage([600,800]).drawText('Original searchable text',{x:60,y:690,size:24});
+  const image=await source.embedPng(scanPng());
+  source.addPage([600,800]).drawImage(image,{x:0,y:0,width:600,height:800});
+  source.getPage(1).drawText('Page stamp',{x:50,y:20,size:10});
+  const original=await source.save(),before=await load(original);
+  const pages=['OCR copy must not overlap the original','Scan OCR'].map(text=>({transform:[1,0,0,-1,0,800],lines:[{x:60,y:90,width:250,height:24,text}]}));
+  const after=await load(await createSearchablePdf({pdfBytes:original,pages}));
+  try {
+    assert.equal((await allText(await after.getPage(1))).map(item=>item.str).join(''),'Original searchable text');
+    assert.equal((await allText(await after.getPage(2))).map(item=>item.str).join(''),'Page stampScan OCR');
+    for(let i=1;i<=2;i++)assert.deepEqual(await pixels(await after.getPage(i)),await pixels(await before.getPage(i)));
+  } finally {await before.loadingTask.destroy();await after.loadingTask.destroy()}
+});
+
+test('repairs saved overlapping text without changing pixels or scanned-page OCR', async () => {
+  const source=await PDFDocument.create();source.addPage([600,800]);source.addPage([600,800]);
+  const pages=['Duplicate OCR','Scan OCR'].map(text=>({transform:[1,0,0,-1,0,800],lines:[{x:60,y:90,width:250,height:24,text}]}));
+  const scan=await createSearchablePdf({pdfBytes:await source.save(),pages});
+  const overlapping=await PDFDocument.load(scan);
+  overlapping.getPage(0).drawText('Original searchable text',{x:60,y:690,size:24});
+  const broken=await overlapping.save(),before=await load(broken);
+  const fixed=await createSearchablePdf({pdfBytes:broken,pages}),after=await load(fixed);
+  try {
+    assert.equal((await allText(await before.getPage(1))).map(item=>item.str).join(''),'Duplicate OCROriginal searchable text');
+    assert.equal((await allText(await after.getPage(1))).map(item=>item.str).join(''),'Original searchable text');
+    assert.equal((await allText(await after.getPage(2))).map(item=>item.str).join(''),'Scan OCR');
+    for(let i=1;i<=2;i++)assert.deepEqual(await pixels(await after.getPage(i)),await pixels(await before.getPage(i)));
+  } finally {await before.loadingTask.destroy();await after.loadingTask.destroy()}
+});
 function scanPng() {
   const canvas=createCanvas(600,800), context=canvas.getContext('2d');
   context.fillStyle='#fff';context.fillRect(0,0,600,800);

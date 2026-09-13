@@ -37,24 +37,30 @@ const assets = { worker: worker.outputFiles[0].text, wasm: readFileSync(new URL(
 assets.revision = createHash('sha256').update(assets.wasm).update(assets.worker).digest('hex');
 const source = readFileSync(new URL('dist/legal-browser-ocr.html', root), 'utf8');
 const app = readFileSync(new URL('dist/structure-reader.js', root), 'utf8').replaceAll('</script', '<\\/script');
-const pdfOptions = `globalThis.LEGAL_PDF_OPTIONS={wasmUrl:new URL('pdfjs/wasm/',location.href).href,cMapUrl:new URL('pdfjs/cmaps/',location.href).href,cMapPacked:true,standardFontDataUrl:new URL('pdfjs/standard_fonts/',location.href).href};`;
-const html = source.replace(/<script type="module">[\s\S]*?<\/script>/, () => `<script>${pdfOptions}globalThis.LEGAL_STRUCTURE_ASSETS=${JSON.stringify(assets)}</script><script type="module">${app}</script>`);
+assets.models = {};
+assets.runtime = {};
+const pdfData = {};
+for (const [kind, directory] of Object.entries({wasmUrl:'wasm',cMapUrl:'cmaps',standardFontDataUrl:'standard_fonts'})) {
+  pdfData[kind] = {};
+  const path = new URL('node_modules/pdfjs-dist/' + directory + '/', root);
+  for (const file of readdirSync(path).filter(name=>!name.startsWith('LICENSE')))
+    pdfData[kind][file] = readFileSync(new URL(file,path)).toString('base64');
+}
+const pdfOptions = `const pdfData=${JSON.stringify(pdfData)};globalThis.LEGAL_PDF_OPTIONS={useWorkerFetch:false,cMapPacked:true,BinaryDataFactory:class{async fetch({kind,filename}){const data=pdfData[kind]?.[filename];if(!data)throw Error('Missing packaged PDF asset: '+filename);return Uint8Array.fromBase64(data);}}};`;
 const packageDir = fileURLToPath(new URL('dist/legal-browser-ocr-structure/', root));
 mkdirSync(packageDir, { recursive: true });
-writeFileSync(join(packageDir, 'index.html'), html);
-for (const directory of ['wasm','cmaps','standard_fonts'])
-  cpSync(new URL('node_modules/pdfjs-dist/' + directory, root), join(packageDir, 'pdfjs', directory), {recursive:true});
 for (const manifest of ['layout-model.json', 'layout-fast-model.json']) {
   const model = JSON.parse(readFileSync(new URL('assets/' + manifest, import.meta.url), 'utf8'));
   const modelBytes = readFileSync(new URL('assets/' + model.localFile, import.meta.url));
   if (createHash('sha256').update(modelBytes).digest('hex') !== model.sha256) throw new Error('Layout model SHA-256 mismatch: ' + manifest);
-  writeFileSync(join(packageDir, model.localFile), modelBytes);
-  writeFileSync(join(packageDir, manifest), JSON.stringify(model, null, 2));
+  assets.models[model.variant === 0 ? 'accurate' : 'fast'] = modelBytes.toString('base64');
 }
 for (const name of ['ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']) {
-  copyFileSync(new URL('node_modules/onnxruntime-web/dist/' + name, root), join(packageDir, name));
+  assets.runtime[name.endsWith('.mjs') ? 'mjs' : 'wasm'] = 'data:' + (name.endsWith('.mjs') ? 'application/javascript' : 'application/wasm') + ';base64,' + readFileSync(new URL('node_modules/onnxruntime-web/dist/' + name, root)).toString('base64');
 }
-for (const name of ['serve.mjs', 'Start.ps1', 'README.md']) copyFileSync(new URL(name, import.meta.url), join(packageDir, name));
+const html = source.replace(/<script type="module">[\s\S]*?<\/script>/, () => `<script>${pdfOptions}globalThis.LEGAL_STRUCTURE_ASSETS=${JSON.stringify(assets)}</script><script type="module">${app}</script>`);
+writeFileSync(join(packageDir, 'index.html'), html);
+for (const name of ['Start.ps1', 'README.md']) copyFileSync(new URL(name, import.meta.url), join(packageDir, name));
 cpSync(new URL('licenses/', import.meta.url), join(packageDir, 'licenses'), { recursive: true });
 copyFileSync(new URL('LICENSE', root), join(packageDir, 'LICENSE'));
 copyFileSync(new URL('README.md', root), join(packageDir, 'OCR-README.md'));

@@ -2,6 +2,7 @@ import { getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import { EventBus, PDFViewer, PDFLinkService } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import pdfStyles from 'pdfjs-dist/web/pdf_viewer.css';
 import { getOcrState, searchablePdf, pdfOptions } from '../../app.js';
+import { createSearchablePdf } from '../../pdf-export.js';
 import { structureInput, outlineEntries } from './mapping.js';
 import { recentDocuments, rememberDocument, forgetDocument, activeDocument, rememberActive, rememberPage } from './recent.js';
 import styles from './reader.css';
@@ -58,6 +59,7 @@ const viewer = new PDFViewer({ container: scroll, eventBus, linkService, maxCanv
 linkService.setViewer(viewer);
 let records = [], active = null, pdfTask, worker, opening = false, generation = 0, lastOcrPages;
 let wasmModule;
+const preparedText = new WeakSet();
 const storageError = () => { storageMessage.textContent = 'Could not remember PDFs in this browser. You can still read and download them in this session.'; };
 const persist = record => rememberDocument(record).catch(storageError);
 
@@ -167,7 +169,11 @@ async function openRecord(record) {
   await previous?.destroy();
   if (token !== generation) return;
   try {
-    const bytes = await record.blob.arrayBuffer();
+    let bytes = await record.blob.arrayBuffer();
+    if (record.ocrPages?.length && !preparedText.has(record)) {
+      bytes = await createSearchablePdf({pdfBytes:bytes,pages:record.ocrPages});
+      record.blob = new Blob([bytes], {type:'application/pdf'}); await persist(record); preparedText.add(record);
+    }
     if (token !== generation) return;
     pdfTask = getDocument({ ...pdfOptions, data: bytes });
     const pdf = await pdfTask.promise;
@@ -190,7 +196,7 @@ window.addEventListener('ocr-state-change', () => {
         const bytes = await searchablePdf();
         const record = { id: crypto.randomUUID(), name: state.name, blob: new Blob([bytes], { type: 'application/pdf' }),
           ocrPages: state.pages, entries: [], profile: profile.value, page: 1 };
-        records.push(record); await persist(record); await openRecord(record);
+        preparedText.add(record); records.push(record); await persist(record); await openRecord(record);
       } catch (error) { message.textContent = `Could not open searchable PDF: ${error.message}`; }
     })();
   }
@@ -203,7 +209,6 @@ button.onclick = async () => {
   const assets = globalThis.LEGAL_STRUCTURE_ASSETS;
   const cacheKey = assets.revision + ':' + selectedModel.sha256;
   try {
-    if (profile.value === '0' && location.protocol === 'file:') throw new Error('Open this edition with Start.ps1 to load the bundled layout model');
     const wasm = wasmModule ? null : Uint8Array.from(atob(assets.wasm), c => c.charCodeAt(0));
     const url = URL.createObjectURL(new Blob([assets.worker], { type: 'text/javascript' }));
     worker = new Worker(url); URL.revokeObjectURL(url); controls();
@@ -231,11 +236,12 @@ button.onclick = async () => {
         data.error ? reject(new Error(data.error)) : resolve(data);
       };
       worker.onerror = event => reject(new Error(event.message || 'Structure detection failed'));
+      const model = profile.value === '0' && !record.layoutCache?.[cacheKey] ? Uint8Array.fromBase64(assets.models[regioning.value]) : null;
       worker.postMessage({ input: { text: input.text, pages: input.pages }, profile: Number(profile.value),
-        assetBase: new URL('./', location.href).href,
+        runtime: assets.runtime, model,
         regioning: regioning.value,
         layouts: record.layoutCache?.[cacheKey],
-        wasm, module: wasmModule }, wasm ? [wasm.buffer] : []);
+        wasm, module: wasmModule }, [wasm?.buffer,model?.buffer].filter(Boolean));
     });
     if (token !== generation) return;
     wasmModule = result.module;

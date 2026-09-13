@@ -25,11 +25,9 @@ async function layoutPages(data, api) {
   if (data.layouts) return data.layouts;
   ort.env.wasm.numThreads = self.crossOriginIsolated
     ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 2)) : 1;
-  ort.env.wasm.wasmPaths = data.assetBase;
+  ort.env.wasm.wasmPaths = data.runtime;
   self.postMessage({ progress: 'Loading document layout model…' });
-  const response = await fetch(new URL(model.localFile, data.assetBase));
-  if (!response.ok) throw new Error('Could not load the bundled layout model');
-  const bytes = await response.arrayBuffer();
+  const bytes = data.model;
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
   if (hash !== model.sha256) throw new Error('Layout model checksum does not match this package');
   const session = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] });

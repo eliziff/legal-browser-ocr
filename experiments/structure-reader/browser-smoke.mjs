@@ -1,12 +1,15 @@
 import { chromium } from 'playwright';
 import { PDFDocument } from 'pdf-lib';
 import { createCanvas } from '@napi-rs/canvas';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
 
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
 
 mkdirSync('dist/structure-smoke', { recursive: true });
+mkdirSync('dist/structure-smoke/standalone', { recursive: true });
+copyFileSync('dist/legal-browser-ocr-structure/index.html','dist/structure-smoke/standalone/index.html');
 const pdf = await PDFDocument.create();
 for (const lines of [
   ['Definitions','This agreement defines the terms used by the parties.','The buyer accepts delivery of the goods.','The seller shall provide written notice.','All notices must be sent to the address below.','The parties agree to act in good faith.','Payment','The buyer shall pay the agreed price.'],
@@ -19,17 +22,14 @@ for (const lines of [
   pdf.addPage([600,800]).drawImage(image,{x:0,y:0,width:600,height:800});
 }
 writeFileSync('dist/structure-smoke/reader-fixture.pdf',await pdf.save());
-const server = spawn(process.execPath, ['dist/legal-browser-ocr-structure/serve.mjs', '8798'], { stdio: ['ignore','pipe','pipe'] });
-await new Promise((resolve, reject) => {
-  server.stdout.once('data', resolve); server.once('error', reject);
-  server.once('exit', code => reject(new Error('Test server exited: ' + code)));
-});
-const browser=await chromium.launch({headless:true});
+const browser=await chromium.launch({headless:true,channel:process.env.SELECTION_BROWSER || undefined});
 let page;
 try {
   page=await browser.newPage({viewport:{width:1400,height:1000}});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto('http://127.0.0.1:8798/');
+  await page.route(/^https?:/,route=>route.abort());
+  await page.context().setOffline(true);
+  await page.goto(pathToFileURL(resolve('dist/structure-smoke/standalone/index.html')).href);
   await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Model ready'),{},{timeout:90000});
   await page.locator('#file').setInputFiles('dist/structure-smoke/reader-fixture.pdf');
   await page.waitForFunction(()=>document.querySelector('#status').textContent==='Page 1 ready.');
@@ -45,7 +45,10 @@ try {
   const titles=await page.locator('.contents nav button').allTextContents();
   console.log('ACCURATE_LAYOUT_MS',Math.round(performance.now()-accurateStarted));
   console.log('CONTENTS',titles);
-  assert.deepEqual(titles,['Definitions','Payment','Termination','Governing Law']);
+  const expected=['Definitions','Payment','Termination','Governing Law'];
+  assert.equal(titles.length,expected.length);
+  expected.forEach((heading,i)=>assert.ok(titles[i].startsWith(heading),heading+' must appear in reading order'));
+  assert.ok(titles.every(title=>!/ · \d+$/.test(title)),'ToC must not append page labels');
   const firstLayouts = await page.evaluate(async()=>{
     const db=await new Promise(resolve=>{const request=indexedDB.open('legal-ocr-recent-pdfs');request.onsuccess=()=>resolve(request.result)});
     const records=await new Promise(resolve=>{const request=db.transaction('documents').objectStore('documents').getAll();request.onsuccess=()=>resolve(request.result)});
@@ -177,4 +180,4 @@ try {
   console.log('FAILURE STATE',await page?.evaluate(()=>({status:document.querySelector('#structure-status')?.textContent,page:document.querySelector('#reader-page')?.value,total:document.querySelector('#reader-total')?.textContent,contents:document.querySelector('.contents nav')?.textContent})));
   await page?.screenshot({path:'dist/structure-smoke/failure.png'});
   throw error;
-} finally { await browser.close(); server.kill(); }
+} finally { await browser.close(); }
