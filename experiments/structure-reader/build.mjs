@@ -6,11 +6,18 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = new URL('../../', import.meta.url);
-const metadata = spawnSync('cargo', ['metadata', '--manifest-path', 'experiments/structure-reader/Cargo.toml', '--format-version', '1', '--offline'], { cwd: root, encoding: 'utf8' });
+const metadata = spawnSync('cargo', ['metadata', '--manifest-path', 'experiments/structure-reader/Cargo.toml', '--format-version', '1', '--offline', '--locked'], { cwd: root, encoding: 'utf8' });
 if (metadata.status) throw new Error(metadata.stderr);
 const upstream = JSON.parse(metadata.stdout).packages.find(pkg => pkg.name === 'legal-pdf-support');
 if (!upstream) throw new Error('Pinned legal-pdf-support source is missing');
-const env = { ...process.env, LEGAL_BROWSER_POSTPROCESS: join(dirname(upstream.manifest_path), 'src', 'ppdoc_postprocess.rs') };
+const upstreamLock = readFileSync(join(dirname(upstream.manifest_path), '..', 'Cargo.lock'), 'utf8');
+for (const name of ['pdf-inspector', 'legal-structure']) {
+  const block = upstreamLock.split('[[package]]').find(block => block.includes(`name = "${name}"`));
+  const source = block?.match(/source = "([^"]+)"/)?.[1];
+  if (!source || JSON.parse(metadata.stdout).packages.find(pkg => pkg.name === name)?.source !== source)
+    throw new Error(`${name} must match the pinned upstream lockfile revision`);
+}
+const env = { ...process.env };
 // These pure functions currently share a file with the native session loader.
 // Select verbatim pinned source at build time; never maintain another port.
 const native = readFileSync(join(dirname(upstream.manifest_path), 'src', 'ppdoc.rs'), 'utf8').replaceAll('\r\n', '\n');
@@ -27,13 +34,19 @@ mkdirSync(dirname(generated), { recursive: true });
 if (!existsSync(generated) || readFileSync(generated, 'utf8') !== pure) writeFileSync(generated, pure);
 env.LEGAL_BROWSER_INFERENCE = generated;
 const checking = process.argv.includes('--check');
-const result = spawnSync('cargo', [checking ? 'check' : 'build', '--manifest-path', 'experiments/structure-reader/Cargo.toml', '--target', 'wasm32-unknown-unknown', ...checking ? [] : ['--release'], '--locked'], { cwd: root, stdio: 'inherit', env });
+const result = spawnSync('cargo', [checking ? 'check' : 'build', '--lib', '--manifest-path', 'experiments/structure-reader/Cargo.toml', '--target', 'wasm32-unknown-unknown', ...checking ? [] : ['--release'], '--locked'], { cwd: root, stdio: 'inherit', env });
 if (result.error) throw result.error;
 if (result.status) process.exit(result.status);
 if (checking) process.exit(0);
+const bindgenVersion=JSON.parse(metadata.stdout).packages.find(pkg=>pkg.name==='wasm-bindgen').version;
+const localBindgen=fileURLToPath(new URL(`target/tools/wasm-bindgen-${bindgenVersion}-x86_64-pc-windows-msvc/wasm-bindgen.exe`,import.meta.url));
+const bindgen=process.env.WASM_BINDGEN || (existsSync(localBindgen)?localBindgen:'wasm-bindgen');
+const binding=spawnSync(bindgen,['--target','web','--omit-default-module-path','--keep-lld-exports','--out-dir','experiments/structure-reader/target/bindgen','experiments/structure-reader/target/wasm32-unknown-unknown/release/browser_structure.wasm'],{cwd:root,stdio:'inherit'});
+if(binding.error)throw binding.error;
+if(binding.status)process.exit(binding.status);
 const worker = await build({ entryPoints: [fileURLToPath(new URL('worker.js', import.meta.url))], bundle: true, format: 'iife', write: false, minify: true });
 await build({ absWorkingDir: fileURLToPath(root), entryPoints: ['experiments/structure-reader/reader.js'], bundle: true, format: 'esm', minify: true, loader: { '.css': 'text' }, outfile: 'dist/structure-reader.js' });
-const assets = { worker: worker.outputFiles[0].text, wasm: readFileSync(new URL('target/wasm32-unknown-unknown/release/browser_structure.wasm', import.meta.url)).toString('base64') };
+const assets = { worker: worker.outputFiles[0].text, wasm: readFileSync(new URL('target/bindgen/browser_structure_bg.wasm', import.meta.url)).toString('base64') };
 assets.revision = createHash('sha256').update(assets.wasm).update(assets.worker).digest('hex');
 const source = readFileSync(new URL('dist/legal-browser-ocr.html', root), 'utf8');
 const app = readFileSync(new URL('dist/structure-reader.js', root), 'utf8').replaceAll('</script', '<\\/script');

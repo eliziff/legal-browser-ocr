@@ -62,6 +62,8 @@ const context = pageCanvas.getContext('2d'), overlayContext = overlay.getContext
 let session, modelBytes, labels, pdf, imageBitmap, crop, cropTemplate, dragStart;
 let sessionPromise;
 let loadedFile = null, ocrPages = null, busy = false, poolError = null;
+let pdfTextProvider, nativePages;
+export function setPdfTextProvider(provider) { pdfTextProvider = provider; }
 let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[],poolTaskId=0;
 let tensorScratch = new Float32Array(), lengthsScratch = new BigInt64Array();
 const fixedSessions = new Map();
@@ -151,11 +153,12 @@ function invalidateOcr() {
   window.dispatchEvent(new Event('ocr-state-change'));
 }
 
-export const getOcrState = () => ({ pages: ocrPages, busy, name: loadedFile?.name });
+export const getOcrState = () => ({ pages: ocrPages, busy, name: loadedFile?.name, sourceFile: loadedFile });
 export async function searchablePdf() {
   if (busy || !loadedFile || !ocrPages) throw new Error('Recognize every page before opening the PDF');
   const file = loadedFile, pages = ocrPages, isPdf = Boolean(pdf);
   const bytes = await file.arrayBuffer();
+  if (isPdf && pages.every(page=>page.source==='native')) return bytes;
   return createSearchablePdf({ ...(isPdf ? { pdfBytes: bytes } : { pngBytes: bytes }), pages });
 }
 
@@ -198,12 +201,17 @@ $('file').onchange = async () => {
   $('document').textContent='';text.textContent='';setCanvasSize(1,1);status.textContent='Loading page…';
   try{
     if(pdf)await pdf.loadingTask.destroy();pdf=null;imageBitmap?.close();imageBitmap=null;
-    await ready;
+    nativePages=null;
     // Keep the immutable File, not PDF.js's transferred/detached ArrayBuffer.
     if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf'))pdf=await getDocument({...pdfOptions,data:await file.arrayBuffer()}).promise;
     else imageBitmap=await createImageBitmap(file);
     await renderPage(1);loadedFile=file;
+    if (pdf && pdfTextProvider) nativePages=await pdfTextProvider(file,pdf);
     text.textContent='Drag a crop or recognize the document.';status.textContent='Page 1 ready.';
+    if(nativePages?.every(Boolean)) {
+      ocrPages=nativePages;text.textContent=nativePages[0].lines.map(line=>line.text).join('\n');
+      status.textContent='Original PDF text ready. OCR skipped.';
+    }
   }catch(error){status.textContent=`Could not load file: ${error.message}`}
   finally{setBusy(false)}
 };
@@ -409,12 +417,17 @@ $('all').onclick=async()=>{
     while(next<=count){
       const number=next++,entry=entries[number-1];let canvas;
       try{
+        if(!cropTemplate && nativePages?.[number-1]) {
+          results[number-1]=nativePages[number-1];entry.pre.textContent=results[number-1].lines.map(line=>line.text).join('\n');
+        } else {
+        await ready;
         const page=await documentCanvas(number);canvas=page.canvas;
         if(entry.img)entry.img.src=canvas.toDataURL('image/jpeg',.72);
         entry.pre.textContent='Recognizing…';
         const result=await recognize(canvas,undefined,true);
         entry.pre.textContent=result.text;
         results[number-1]={lines:result.lines,transform:page.transform,width:canvas.width,height:canvas.height};
+        }
       }catch(error){failed++;entry.pre.textContent=`OCR failed: ${error.message}`}
       finally{if(canvas)canvas.width=canvas.height=1}
       done++;status.textContent=`Processed ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;

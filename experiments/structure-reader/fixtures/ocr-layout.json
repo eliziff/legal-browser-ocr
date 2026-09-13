@@ -1,0 +1,442 @@
+{
+  "expectedHeadings": [
+    "Definitions",
+    "Payment",
+    "Termination",
+    "Governing Law"
+  ],
+  "layouts": [
+    {
+      "width": 600,
+      "height": 800,
+      "detections": [
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.9206750392913818,
+          "bbox": [
+            37,
+            331,
+            325,
+            349
+          ],
+          "order": 1
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.9183815121650696,
+          "bbox": [
+            36,
+            212,
+            391,
+            227
+          ],
+          "order": 2
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.9139707684516907,
+          "bbox": [
+            37,
+            172,
+            329,
+            187
+          ],
+          "order": 3
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.913834810256958,
+          "bbox": [
+            37,
+            252,
+            326,
+            268
+          ],
+          "order": 4
+        },
+        {
+          "label_id": 0,
+          "label": "paragraph_title",
+          "score": 0.9128881692886353,
+          "bbox": [
+            37,
+            48,
+            156,
+            66
+          ],
+          "order": 5
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.9063736200332642,
+          "bbox": [
+            37,
+            132,
+            352,
+            148
+          ],
+          "order": 6
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.9043356776237488,
+          "bbox": [
+            37,
+            92,
+            452,
+            108
+          ],
+          "order": 7
+        },
+        {
+          "label_id": 0,
+          "label": "paragraph_title",
+          "score": 0.8951481580734253,
+          "bbox": [
+            37,
+            288,
+            136,
+            310
+          ],
+          "order": 8
+        }
+      ]
+    },
+    {
+      "width": 600,
+      "height": 800,
+      "detections": [
+        {
+          "label_id": 0,
+          "label": "paragraph_title",
+          "score": 0.9078058004379272,
+          "bbox": [
+            38,
+            48,
+            167,
+            66
+          ],
+          "order": 1
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.9074350595474243,
+          "bbox": [
+            38,
+            211,
+            390,
+            229
+          ],
+          "order": 2
+        },
+        {
+          "label_id": 0,
+          "label": "paragraph_title",
+          "score": 0.9025588035583496,
+          "bbox": [
+            37,
+            168,
+            204,
+            189
+          ],
+          "order": 3
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.879279613494873,
+          "bbox": [
+            37,
+            92,
+            366,
+            108
+          ],
+          "order": 4
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.8686453104019165,
+          "bbox": [
+            37,
+            132,
+            279,
+            148
+          ],
+          "order": 5
+        }
+      ]
+    }
+  ],
+  "ocr": [
+    [
+      {
+        "text": "Definitions",
+        "bbox": [
+          42,
+          50.5,
+          156,
+          67
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "This agreement defines the terms used by the pa",
+        "bbox": [
+          40,
+          94,
+          416,
+          110
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "The buyer accepts delivery of the goods.",
+        "bbox": [
+          40,
+          134,
+          351,
+          150
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "The seller shall provide written notice.",
+        "bbox": [
+          40,
+          174,
+          329,
+          187
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "All notices must be sent to the address below.",
+        "bbox": [
+          40,
+          214,
+          391,
+          227
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "The parties agree to act in good faith.",
+        "bbox": [
+          40,
+          254,
+          326,
+          270
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "Payment",
+        "bbox": [
+          42,
+          290.5,
+          135,
+          307
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "The buyer shall pay the agreed price.",
+        "bbox": [
+          40,
+          334,
+          325,
+          350
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "ties.",
+        "bbox": [
+          415.5,
+          97,
+          453.5,
+          107
+        ],
+        "confidence": 1
+      }
+    ],
+    [
+      {
+        "text": "Termination",
+        "bbox": [
+          41,
+          50.5,
+          167,
+          67
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "Either party may terminate this agreement.",
+        "bbox": [
+          41,
+          94,
+          366,
+          110
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "Notice must be given in writing.",
+        "bbox": [
+          41,
+          134,
+          279,
+          150
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "Governing Law",
+        "bbox": [
+          41,
+          170.5,
+          204,
+          187
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "o",
+        "bbox": [
+          43,
+          187.5,
+          201,
+          191.5
+        ],
+        "confidence": 1
+      },
+      {
+        "text": "This agreement is governed by Canadian law.",
+        "bbox": [
+          40,
+          214,
+          391,
+          230
+        ],
+        "confidence": 1
+      }
+    ]
+  ],
+  "fastLayouts": [
+    {
+      "width": 600,
+      "height": 800,
+      "detections": [
+        {
+          "label_id": 0,
+          "label": "paragraph_title",
+          "score": 0.774179995059967,
+          "bbox": [
+            38,
+            48,
+            157,
+            66
+          ],
+          "order": 1
+        },
+        {
+          "label_id": 0,
+          "label": "paragraph_title",
+          "score": 0.5652999877929688,
+          "bbox": [
+            38,
+            289,
+            137,
+            310
+          ],
+          "order": 2
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.7155874967575073,
+          "bbox": [
+            51,
+            251,
+            326,
+            269
+          ],
+          "order": 3
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.6837549805641174,
+          "bbox": [
+            51,
+            171,
+            328,
+            188
+          ],
+          "order": 4
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.6667043566703796,
+          "bbox": [
+            37,
+            131,
+            352,
+            150
+          ],
+          "order": 5
+        },
+        {
+          "label_id": 2,
+          "label": "text",
+          "score": 0.6569503545761108,
+          "bbox": [
+            38,
+            331,
+            325,
+            350
+          ],
+          "order": 6
+        }
+      ]
+    },
+    {
+      "width": 600,
+      "height": 800,
+      "detections": [
+        {
+          "label_id": 0,
+          "label": "paragraph_title",
+          "score": 0.6887290477752686,
+          "bbox": [
+            38,
+            48,
+            167,
+            66
+          ],
+          "order": 1
+        }
+      ]
+    }
+  ],
+  "fastUnmatchedLines": [
+    "p0001-l0002",
+    "p0001-l0005",
+    "p0001-l0009",
+    "p0002-l0002",
+    "p0002-l0003",
+    "p0002-l0004",
+    "p0002-l0005",
+    "p0002-l0006"
+  ]
+}

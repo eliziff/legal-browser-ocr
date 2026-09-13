@@ -26,6 +26,7 @@ const browser=await chromium.launch({headless:true,channel:process.env.SELECTION
 let page;
 try {
   page=await browser.newPage({viewport:{width:1400,height:1000}});
+  await page.addInitScript(()=>{const NativeWorker=Worker;globalThis.structureEvidence=[];globalThis.Worker=class extends NativeWorker{constructor(...args){super(...args);this.addEventListener('message',({data})=>{if(data.nodes)globalThis.structureEvidence.push(data);});}};});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.route(/^https?:/,route=>route.abort());
   await page.context().setOffline(true);
@@ -67,7 +68,8 @@ try {
   await page.locator('#detect-structure').click();
   await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
   console.log('FAST_LAYOUT_MS',Math.round(performance.now()-fastStarted),'CONTENTS',await page.locator('.contents nav button').allTextContents());
-  assert.deepEqual(await page.locator('.contents nav button').allTextContents(),['Definitions','Payment','Termination']);
+  assert.deepEqual(await page.locator('.contents nav button').allTextContents(),[]);
+  assert.ok((await page.locator('#structure-status').textContent()).includes('regions were discarded'));
   assert.ok(!(await page.locator('#structure-status').textContent()).includes('Could not detect'));
   const diagnostic = await page.evaluate(async()=>{
     const db=await new Promise(resolve=>{const request=indexedDB.open('legal-ocr-recent-pdfs');request.onsuccess=()=>resolve(request.result)});
@@ -80,6 +82,7 @@ try {
   await page.locator('#detect-structure').click();
   await page.waitForFunction(()=>!document.querySelector('#detect-structure').disabled);
   console.log('CACHED_LAYOUT_MS',Math.round(performance.now()-cachedStarted));
+  assert.equal(await page.locator('.contents nav button').count(),4);
   await page.locator('#toggle-contents').click();
   assert.equal(await page.locator('#contents-dock').isVisible(),false);
   assert.equal(await page.locator('#toggle-contents').getAttribute('aria-expanded'),'false');
@@ -177,6 +180,7 @@ try {
   assert.deepEqual(errors,[]);
   console.log('PASS: real OCR, PDF structure detection, selection, dock, fullscreen, history, restore, mobile and confirmed removal');
 } catch (error) {
+  writeFileSync('dist/structure-smoke/failure-evidence.json',JSON.stringify(await page?.evaluate(()=>globalThis.structureEvidence),null,2));
   console.log('FAILURE STATE',await page?.evaluate(()=>({status:document.querySelector('#structure-status')?.textContent,page:document.querySelector('#reader-page')?.value,total:document.querySelector('#reader-total')?.textContent,contents:document.querySelector('.contents nav')?.textContent})));
   await page?.screenshot({path:'dist/structure-smoke/failure.png'});
   throw error;

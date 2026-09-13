@@ -6,7 +6,7 @@ both regioning models, structure WASM, PDF.js and its support files are embedded
 No server, Node.js installation, or network connection is needed to use it.
 `Start.ps1` is an optional Windows shortcut that opens the same HTML file.
 
-The HTML is about 204 MiB because it includes the Accurate model as well as Fast.
+The HTML is about 208 MiB because it includes the Accurate model as well as Fast.
 Only the selected model is decoded for inference. Direct file use runs layout
 inference in one worker thread; OCR keeps its existing optimized runtime.
 Recent PDFs stay in browser storage. Keep the HTML at a stable location and use
@@ -15,7 +15,9 @@ are separate browser storage contexts.
 
 ## Reading and detection
 
-Recognize every page to open a searchable PDF. **Detect structure** adds a
+Digital PDFs open with their original text and skip OCR. Mixed PDFs retain native
+pages and recognize only the pages upstream extraction flags for OCR.
+For scanned PDFs, recognize every page to open a searchable PDF. **Detect structure** adds a
 collapsible Contents dock. General uses visual layout regions; Legislation and
 Contract use the corresponding upstream text parsers. General is the default.
 
@@ -50,11 +52,13 @@ this browser and origin. Clearing browser data removes saved documents.
 
 The Rust WASM adapter pins legal-pdf-parser and the same legal-structure revision
 used by that parser. Cargo.lock records the exact combination. The upstream parser
-and optimized OCR runtime are unchanged. There is no new heading grammar.
+fix preserves validated layout roles when OCR has no font metrics; the shared
+heading grammar and prose demotion still decide the final graph. The optimized
+OCR runtime is unchanged. There is no browser heading grammar.
 
-The build compiles the pinned upstream cubic image preprocessing, detection
-postprocessing and region-to-line assignment directly from its Cargo checkout.
-Pure functions that currently share a file with native inference are selected
+Region postprocessing and assignment use the upstream public Rust API on both
+native and WASM. Cubic image preprocessing and model-output decoding functions
+that currently share a file with native inference are selected
 verbatim at build time. Upstream source changes fail the build if these boundaries
 change; no second maintained copy is checked in.
 
@@ -66,19 +70,24 @@ uses PaddlePaddle's ONNX export. Runtime loading checks each model's SHA-256.
 OCR crop geometry is transformed to PDF page coordinates. Unknown font size stays
 unknown: ink-box height is not a font metric. Upstream only receives region
 assignments when every nonblank OCR line matches a region. Otherwise the reader
-reports partial coverage. General's ToC retains model heading regions separately:
-the pinned parser can demote valid unnumbered titles and its structural sections
-can include ordinary numbered list items. Legal profiles retain parser sections.
+reports that model regions were discarded. General's ToC uses only final upstream
+heading nodes and their graph hierarchy. Raw model labels never create ToC entries.
+Legal profiles retain parser sections.
 
 Detection processes one page at a time, uses up to four WASM threads where available,
 and disposes its worker after completion. Compiled Rust WASM and per-document layout
-results are reused. The input limit is 4 MB of OCR JSON. PDF bookmark export and
-full native extraction parity are not included.
+results are reused. The input limit is 4 MB of extraction JSON. PDF bookmark export
+is not included. Extraction runs the pinned upstream PDF Inspector and extraction
+crates in WASM, retaining native fonts, spans, geometry and OCR routing. A native
+reference executable checks extraction records and final graphs against WASM.
 
 ## Build and validation
 
 From the repository root, with Node/npm, Rust, the wasm32-unknown-unknown target
-and the existing licensed OCR assets described in the root README:
+and the existing licensed OCR assets described in the root README. Install the
+wasm-bindgen CLI version matching Cargo.lock (currently 0.2.127), available on PATH
+or through the WASM_BINDGEN environment variable. The build uses generated upstream
+JavaScript bindings for WASM imports:
 
 ```sh
 npm ci
@@ -87,6 +96,9 @@ node experiments/structure-reader/fetch-models.mjs
 node experiments/structure-reader/build.mjs
 npm test
 node --test experiments/structure-reader/mapping.test.mjs
+cargo build --manifest-path experiments/structure-reader/Cargo.toml --bin upstream-parity --locked
+node --test experiments/structure-reader/pipeline.test.mjs
+node experiments/structure-reader/native-browser.test.mjs
 ```
 
 The runnable package is `dist/legal-browser-ocr-structure/`. Keep all files together.
@@ -137,15 +149,14 @@ https://github.com/mozilla/pdf.js/commit/ea43bb43fba60cfc69024df91d98d319a787d03
 The viewer, PDF worker, styles, fonts, CMaps and image decoders are packaged together.
 The PDF loader uses the current loading-task cleanup API. OCR computation is unchanged.
 
-General passes the model's heading titles to the pinned upstream enumerator and
-heading-ladder functions. Their nesting levels and explicit dotted-number depths
-are preserved in the ToC; the adapter does not define a new numbering grammar.
-Unknown unnumbered levels remain flat. Titles retain their own numbering, but the
+General uses the final upstream graph's heading nodes and parent relationships.
+The adapter does not run a separate heading ladder or infer numbering levels.
+Titles retain their own numbering, but the
 ToC no longer adds page labels. Clicking a title still navigates to its source.
 Select Detect structure again to calculate levels for a previously saved result.
 
-The mapping/WASM check covers mixed Roman/letter/numeric nesting and dotted
-numbering. With the app running locally, `node experiments/structure-reader/selection-smoke.mjs`
+The mapping check covers graph hierarchy and section wrappers. The upstream suite
+covers Roman/letter/numeric heading grammar. `node experiments/structure-reader/selection-smoke.mjs`
 checks forward/reverse drags, margins, gaps and direction changes, including the
 painted highlight. Set SELECTION_BROWSER to chrome or msedge to test the installed
 browser rather than Playwright's bundled Chromium. These checks did not reproduce

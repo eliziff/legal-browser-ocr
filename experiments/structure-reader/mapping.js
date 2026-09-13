@@ -4,7 +4,7 @@ export function structureInput(pages, viewports) {
   pages.forEach((page, index) => {
     for (const [lineIndex, line] of page.lines.entries()) {
       const length = line.text.length; // The shared engine publishes UTF-16 offsets.
-      lines.push({ id: `p${index + 1}-l${lineIndex + 1}`, start: offset, end: offset + length, page: index + 1, line, transform: page.transform });
+      lines.push({ id: line.id || `p${index + 1}-l${lineIndex + 1}`, start: offset, end: offset + length, page: index + 1, line, transform: page.transform });
       text += line.text + '\n'; offset += length + 1;
     }
     text += '\n'; offset++;
@@ -27,26 +27,12 @@ export function structureInput(pages, viewports) {
   })) };
 }
 
-export function outlineEntries(nodes, lines, layoutLines, headingLevels = {}) {
+export function outlineEntries(nodes, lines, headingsOnly = false) {
   const byId = new Map(nodes.map(node => [node.id, node]));
   const byLineId = new Map(lines.map(line => [line.id, line]));
-  // General navigation follows visual heading regions. Legal profiles use the
-  // parser's sections; list items in a general document are not ToC headings.
-  const candidates = layoutLines ? [] : [...nodes.filter(node => node.kind === 'heading'), ...nodes.filter(node => node.kind === 'section')];
+  const candidates = nodes.filter(node => node.kind === 'heading' || (!headingsOnly && node.kind === 'section'));
   const seen = new Set();
-  const regions = new Map();
-  for (const assignment of layoutLines || []) {
-    const hit = byLineId.get(assignment.id);
-    if (!hit || !['paragraph_title','heading','doc_title'].includes(assignment.region_type)) continue;
-    seen.add(hit.id);
-    const region = regions.get(assignment.region_id) || { hit, titles: [] };
-    region.titles.push(hit.line.text); regions.set(assignment.region_id, region);
-  }
-  const entries = [...regions].map(([id, { hit, titles }]) => {
-    const [a,b,c,d,e,f] = hit.transform, { x,y } = hit.line;
-    return { id, title: titles.join(' '), page: hit.page, depth: headingLevels[id] ?? 0, order: hit.start,
-      point: [a*x+c*y+e, b*x+d*y+f] };
-  });
+  const entries = [];
   entries.push(...candidates.flatMap(node => {
     const hit = byLineId.get(node.line_ids?.[0]) || lines.find(line => line.start <= node.range.start && node.range.start < line.end);
     if (!hit || seen.has(hit.id)) return [];
@@ -57,7 +43,9 @@ export function outlineEntries(nodes, lines, layoutLines, headingLevels = {}) {
     while (parent && !ancestors.has(parent)) {
       ancestors.add(parent); const ancestor = byId.get(parent);
       if (!ancestor) break;
-      if (['heading','section'].includes(ancestor.kind)) depth++;
+      // A heading labels its containing section; that wrapper is not a level.
+      if (['heading','section'].includes(ancestor.kind) &&
+          !(node.kind === 'heading' && parent === node.parent_id && ancestor.kind === 'section')) depth++;
       parent = ancestor.parent_id;
     }
     return [{ id: node.id, title: node.kind === 'heading' ? node.label || hit.line.text : hit.line.text, page: hit.page, depth, order: hit.start,

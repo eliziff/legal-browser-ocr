@@ -1,6 +1,7 @@
 import * as ort from 'onnxruntime-web/wasm';
 import accurateModel from './assets/layout-model.json';
 import fastModel from './assets/layout-fast-model.json';
+import { initSync } from './target/bindgen/browser_structure.js';
 
 let receivePage;
 const unpack = (api, packed) => {
@@ -17,6 +18,24 @@ function call(api, operation, input, ...args) {
     if (result.error) throw new Error(result.error);
     return result;
   } finally { api.release(ptr, bytes.length); }
+}
+function extract(api, pdf, pages) {
+  const ptr=api.allocate(pdf.length);
+  let input, inputPtr;
+  try {
+    new Uint8Array(api.memory.buffer,ptr,pdf.length).set(pdf);
+    let result;
+    if (pages) {
+      input=new TextEncoder().encode(JSON.stringify(pages.map(page=>({width:page.width,height:page.height,lines:page.lines.map(line=>({
+        text:line.text,bbox:[line.x,line.y,line.x+line.width,line.y+line.height],confidence:line.confidence ?? 1,
+      }))}))));
+      inputPtr=api.allocate(input.length);new Uint8Array(api.memory.buffer,inputPtr,input.length).set(input);
+      result=api.extract_ocr(ptr,pdf.length,inputPtr,input.length);
+    } else result=api.extract_pdf(ptr,pdf.length);
+    const output=JSON.parse(new TextDecoder().decode(unpack(api,result)));
+    if(output.error)throw Error(output.error);
+    return output;
+  } finally {api.release(ptr,pdf.length);if(input)api.release(inputPtr,input.length);}
 }
 
 async function layoutPages(data, api) {
@@ -81,13 +100,14 @@ self.onmessage = async ({ data }) => {
     return;
   }
   try {
-    if (new TextEncoder().encode(JSON.stringify(data.input)).length > 4_000_000) throw new Error('This edition supports up to 4 MB of OCR data.');
     const module = data.module || await WebAssembly.compile(data.wasm);
-    const { exports: api } = await WebAssembly.instantiate(module);
+    const api = initSync({module});
+    if(data.extract){self.postMessage({extracted:extract(api,data.extract),module});return;}
+    const extracted=extract(api,data.pdf,data.input.pages);
+    data.input.pages=extracted.pages;
     const layouts = data.profile === 0 ? await layoutPages(data, api) : null;
-    if (layouts) data.input.pages.forEach((page, i) => { page.layout = layouts[i]; });
     self.postMessage({ progress: 'Building document structure…' });
-    const result = call(api, 'detect', data.input, data.profile);
+    const result = call(api, 'detect', {extracted,layouts}, data.profile);
     self.postMessage({ ...result, module, layouts });
   } catch (error) { self.postMessage({ error: error.message }); }
 };

@@ -1,8 +1,9 @@
 import { getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import { EventBus, PDFViewer, PDFLinkService } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import pdfStyles from 'pdfjs-dist/web/pdf_viewer.css';
-import { getOcrState, searchablePdf, pdfOptions } from '../../app.js';
-import { createSearchablePdf } from '../../pdf-export.js';
+import { getOcrState, searchablePdf, pdfOptions, setPdfTextProvider } from '../../app.js';
+import { createSearchablePdf, sourcePdfBytes } from '../../pdf-export.js';
+import { cropToPdfTransform } from '../../text-layer.js';
 import { structureInput, outlineEntries } from './mapping.js';
 import { recentDocuments, rememberDocument, forgetDocument, activeDocument, rememberActive, rememberPage } from './recent.js';
 import styles from './reader.css';
@@ -59,6 +60,26 @@ const viewer = new PDFViewer({ container: scroll, eventBus, linkService, maxCanv
 linkService.setViewer(viewer);
 let records = [], active = null, pdfTask, worker, opening = false, generation = 0, lastOcrPages;
 let wasmModule;
+function pageEvidence(page,viewport) {
+  return {source:page.source,width:page.width,height:page.height,transform:cropToPdfTransform(viewport.transform,{x:0,y:0,w:viewport.width,h:viewport.height},page.width,page.height),
+    lines:page.lines.map(line=>({id:line.id,text:line.text,x:line.bbox[0],y:line.bbox[1],width:line.bbox[2]-line.bbox[0],height:line.bbox[3]-line.bbox[1]}))};
+}
+setPdfTextProvider(async (file,pdf)=>{
+  const assets=globalThis.LEGAL_STRUCTURE_ASSETS,bytes=new Uint8Array(await file.arrayBuffer());
+  const wasm=wasmModule ? null : Uint8Array.fromBase64(assets.wasm);
+  const url=URL.createObjectURL(new Blob([assets.worker],{type:'text/javascript'}));
+  const extractor=new Worker(url);URL.revokeObjectURL(url);
+  try {
+    const result=await new Promise((resolve,reject)=>{
+      extractor.onmessage=({data})=>data.error?reject(Error(data.error)):resolve(data);
+      extractor.onerror=event=>reject(Error(event.message));
+      extractor.postMessage({extract:bytes,wasm,module:wasmModule},[bytes.buffer,...wasm?[wasm.buffer]:[]]);
+    });
+    wasmModule=result.module;
+    const needsOcr=new Set(result.extracted.metadata.pages_needing_ocr);
+    return Promise.all(result.extracted.pages.map(async (page,index)=>needsOcr.has(index)?null:pageEvidence(page,(await pdf.getPage(index+1)).getViewport({scale:1}))));
+  } finally {extractor.terminate();}
+});
 const preparedText = new WeakSet();
 const storageError = () => { storageMessage.textContent = 'Could not remember PDFs in this browser. You can still read and download them in this session.'; };
 const persist = record => rememberDocument(record).catch(storageError);
@@ -170,7 +191,7 @@ async function openRecord(record) {
   if (token !== generation) return;
   try {
     let bytes = await record.blob.arrayBuffer();
-    if (record.ocrPages?.length && !preparedText.has(record)) {
+    if (record.ocrPages?.length && !record.ocrPages.every(page=>page.source==='native') && !preparedText.has(record)) {
       bytes = await createSearchablePdf({pdfBytes:bytes,pages:record.ocrPages});
       record.blob = new Blob([bytes], {type:'application/pdf'}); await persist(record); preparedText.add(record);
     }
@@ -195,7 +216,7 @@ window.addEventListener('ocr-state-change', () => {
       try {
         const bytes = await searchablePdf();
         const record = { id: crypto.randomUUID(), name: state.name, blob: new Blob([bytes], { type: 'application/pdf' }),
-          ocrPages: state.pages, entries: [], profile: profile.value, page: 1 };
+          ocrPages: state.pages, sourceBlob: state.sourceFile?.type==='application/pdf'?state.sourceFile:null, entries: [], profile: profile.value, page: 1 };
         preparedText.add(record); records.push(record); await persist(record); await openRecord(record);
       } catch (error) { message.textContent = `Could not open searchable PDF: ${error.message}`; }
     })();
@@ -216,6 +237,7 @@ button.onclick = async () => {
     const viewports = await Promise.all(record.ocrPages.map(async (_, index) => (await pdf.getPage(index + 1)).getViewport({ scale: 1 })));
     if (token !== generation) return;
     const input = structureInput(record.ocrPages, viewports);
+    const source = record.sourceBlob ? new Uint8Array(await record.sourceBlob.arrayBuffer()) : await sourcePdfBytes(await record.blob.arrayBuffer());
     const result = await new Promise((resolve, reject) => {
       const currentWorker = worker;
       worker.onmessage = async ({ data }) => {
@@ -237,19 +259,20 @@ button.onclick = async () => {
       };
       worker.onerror = event => reject(new Error(event.message || 'Structure detection failed'));
       const model = profile.value === '0' && !record.layoutCache?.[cacheKey] ? Uint8Array.fromBase64(assets.models[regioning.value]) : null;
-      worker.postMessage({ input: { text: input.text, pages: input.pages }, profile: Number(profile.value),
+      worker.postMessage({ pdf:source,input: { text: input.text, pages: input.pages }, profile: Number(profile.value),
         runtime: assets.runtime, model,
         regioning: regioning.value,
         layouts: record.layoutCache?.[cacheKey],
-        wasm, module: wasmModule }, [wasm?.buffer,model?.buffer].filter(Boolean));
+        wasm, module: wasmModule }, [source.buffer,wasm?.buffer,model?.buffer].filter(Boolean));
     });
     if (token !== generation) return;
     wasmModule = result.module;
     if (result.offset_unit !== 'utf16') throw new Error('Unsupported structure coordinates');
-    record.entries = outlineEntries(result.nodes, input.lines, result.layout_lines, result.heading_levels); record.profile = profile.value;
-    const missing = result.unclassified_lines?.length || 0;
+    const evidence=structureInput(result.pages.map((page,index)=>pageEvidence(page,viewports[index])));
+    record.entries = outlineEntries(result.nodes, evidence.lines, profile.value==='0'); record.profile = profile.value;
+    const missing = result.diagnostics?.find(diagnostic=>diagnostic.code==='PPDOC_LAYOUT_INCOMPLETE')?.line_ids?.length || 0;
     record.structureStatus = missing
-      ? `${record.entries.length} headings found; ${missing} lines unclassified. ${regioning.value === 'fast' ? 'Try Accurate for more coverage.' : 'Review the contents against the PDF.'}`
+      ? `Layout did not cover ${missing} lines, so its regions were discarded. ${record.entries.length} headings found from text. ${regioning.value === 'fast' ? 'Try Accurate for more coverage.' : 'Review the contents against the PDF.'}`
       : record.entries.length ? `${record.entries.length} sections detected. Review against the PDF.` : 'No sections detected. You can still scroll and read the PDF.';
     if (result.layouts) {
       record.layoutCache ??= {};

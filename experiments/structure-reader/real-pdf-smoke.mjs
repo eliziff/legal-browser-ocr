@@ -2,7 +2,8 @@
 import { chromium } from 'playwright';
 import { PDFDocument } from 'pdf-lib';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
 
 const fixtures = [
@@ -10,9 +11,7 @@ const fixtures = [
   { name: 'contract', pages: [11], headings: ['DESCRIPTION OF THE STANDING OFFER', 'Number and types', 'Duration and Extension', 'Future Adjustment', 'Replenishment', 'Evaluation of Consultants'] },
   { name: 'legislation', pages: [70], headings: ['Short Title', 'Interpretation'] },
 ];
-const server = spawn(process.execPath, ['dist/legal-browser-ocr-structure/serve.mjs','8798'], {stdio:['ignore','pipe','pipe']});
-await new Promise((resolve,reject)=>{server.stdout.once('data',resolve);server.once('error',reject);server.once('exit',code=>reject(Error('Server exited: '+code)));});
-const browser = await chromium.launch({headless:true});
+const browser = await chromium.launch({headless:true,channel:process.env.SELECTION_BROWSER||'chrome'});
 const results = [];
 try {
   for (const fixture of fixtures) {
@@ -23,12 +22,15 @@ try {
     writeFileSync(path,await subset.save());
     const page = await browser.newPage({viewport:{width:1400,height:1000}});
     const errors = []; page.on('pageerror',error=>errors.push(error.message));
-    await page.goto('http://127.0.0.1:8798/');
-    await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('Model ready'),{},{timeout:90000});
+    await page.route(/^https?:/,route=>route.abort());
+    await page.context().setOffline(true);
+    await page.goto(pathToFileURL(resolve('dist/legal-browser-ocr-structure/index.html')).href);
     await page.locator('#file').setInputFiles(path);
-    await page.waitForFunction(()=>document.querySelector('#status').textContent==='Page 1 ready.');
-    await page.locator('#segmentation').selectOption('tesseract');
-    await page.locator('#all').click();
+    await page.waitForFunction(()=>!document.querySelector('#all').disabled,{},{timeout:90000});
+    if(await page.locator('#download').isDisabled()) {
+      await page.locator('#segmentation').selectOption('tesseract');
+      await page.locator('#all').click();
+    }
     await page.waitForFunction(()=>!document.querySelector('#download').disabled,{},{timeout:180000});
     for (const regioning of ['accurate','fast']) {
       await page.locator('#regioning').selectOption(regioning);
@@ -60,4 +62,4 @@ try {
     const runs = results.filter(result=>result.name===fixture.name);
     assert.deepEqual(fixture.headings.filter(heading=>runs.every(run=>run.missing.includes(heading))),[],fixture.name);
   }
-} finally { await browser.close(); server.kill(); }
+} finally { await browser.close(); }

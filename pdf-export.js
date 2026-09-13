@@ -20,6 +20,10 @@ function removeGeneratedText(document) {
   }
   return removed;
 }
+export async function sourcePdfBytes(bytes) {
+  const document=await PDFDocument.load(bytes,{updateMetadata:false});
+  return removeGeneratedText(document) ? document.save({updateFieldAppearances:false}) : new Uint8Array(bytes);
+}
 
 async function existingTextPages(bytes, pages) {
   const { getDocument, Util } = await import('pdfjs-dist/build/pdf.mjs');
