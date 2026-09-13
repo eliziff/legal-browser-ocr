@@ -89,6 +89,7 @@ dependencies = [
  "image",
  "legal-pdf-core",
  "legal-pdf-extraction",
+ "legal-pdf-ocr",
  "legal-pdf-structure",
  "legal-pdf-support",
  "legal-structure",
@@ -309,13 +310,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fdeflate"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
+dependencies = [
+ "simd-adler32",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
 dependencies = [
  "crc32fast",
- "miniz_oxide",
+ "miniz_oxide 0.9.1",
  "zlib-rs",
 ]
 
@@ -368,6 +378,7 @@ dependencies = [
  "byteorder-lite",
  "moxcms",
  "num-traits",
+ "png",
 ]
 
 [[package]]
@@ -439,7 +450,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-core"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=f0f9383f7642233a97aab1e472b140592b8f9d0f#f0f9383f7642233a97aab1e472b140592b8f9d0f"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
 dependencies = [
  "flate2",
  "legal-structure",
@@ -452,7 +463,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-extraction"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=f0f9383f7642233a97aab1e472b140592b8f9d0f#f0f9383f7642233a97aab1e472b140592b8f9d0f"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-extraction-processor",
@@ -462,7 +473,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-extraction-processor"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=f0f9383f7642233a97aab1e472b140592b8f9d0f#f0f9383f7642233a97aab1e472b140592b8f9d0f"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
 dependencies = [
  "legal-pdf-core",
  "lopdf",
@@ -473,9 +484,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "legal-pdf-ocr"
+version = "0.1.0"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
+dependencies = [
+ "legal-pdf-core",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "legal-pdf-pairing"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=f0f9383f7642233a97aab1e472b140592b8f9d0f#f0f9383f7642233a97aab1e472b140592b8f9d0f"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-support",
@@ -487,7 +509,7 @@ dependencies = [
 [[package]]
 name = "legal-pdf-structure"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=f0f9383f7642233a97aab1e472b140592b8f9d0f#f0f9383f7642233a97aab1e472b140592b8f9d0f"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
 dependencies = [
  "legal-pdf-core",
  "legal-pdf-pairing",
@@ -500,8 +522,9 @@ dependencies = [
 [[package]]
 name = "legal-pdf-support"
 version = "0.1.0"
-source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=f0f9383f7642233a97aab1e472b140592b8f9d0f#f0f9383f7642233a97aab1e472b140592b8f9d0f"
+source = "git+https://github.com/eliziff/legal-pdf-parser.git?rev=0e1196c9ccda26982010561ebd7ee5837f9770be#0e1196c9ccda26982010561ebd7ee5837f9770be"
 dependencies = [
+ "image",
  "legal-pdf-core",
  "legal-structure",
  "regex",
@@ -579,6 +602,16 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "miniz_oxide"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
+dependencies = [
+ "adler2",
+ "simd-adler32",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -665,6 +698,19 @@ dependencies = [
  "thiserror",
  "ttf-parser",
  "unicode-normalization",
+]
+
+[[package]]
+name = "png"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
+dependencies = [
+ "bitflags",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide 0.8.9",
 ]
 
 [[package]]

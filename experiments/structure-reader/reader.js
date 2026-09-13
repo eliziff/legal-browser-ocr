@@ -88,7 +88,7 @@ profile.addEventListener('change', controls);
 function controls() {
   button.disabled = opening || Boolean(worker) || !active?.ocrPages;
   profile.disabled = opening || Boolean(worker);
-  regioning.disabled = opening || Boolean(worker) || profile.value !== '0';
+  regioning.disabled = opening || Boolean(worker) || profile.value !== '0' || active?.ocrPages?.every(page => page.source === 'native');
   download.disabled = opening || !active;
 }
 function drawTabs() {
@@ -182,6 +182,9 @@ function confirmRemoval(record) {
 
 async function openRecord(record) {
   const token = ++generation; worker?.terminate(); worker = null;
+  if (record.structureRevision !== assets.revision) {
+    record.entries = []; record.structureStatus = '';
+  }
   opening = true; active = record; controls(); drawTabs(); drawContents();
   profile.value = record.profile || '0'; preview.open = false;
   regioning.value = record.regioning || 'accurate';
@@ -258,7 +261,7 @@ button.onclick = async () => {
         data.error ? reject(new Error(data.error)) : resolve(data);
       };
       worker.onerror = event => reject(new Error(event.message || 'Structure detection failed'));
-      const model = profile.value === '0' && !record.layoutCache?.[cacheKey] ? Uint8Array.fromBase64(assets.models[regioning.value]) : null;
+      const model = profile.value === '0' && record.ocrPages.some(page => page.source !== 'native') && !record.layoutCache?.[cacheKey] ? Uint8Array.fromBase64(assets.models[regioning.value]) : null;
       worker.postMessage({ pdf:source,input: { text: input.text, pages: input.pages }, profile: Number(profile.value),
         runtime: assets.runtime, model,
         regioning: regioning.value,
@@ -270,6 +273,7 @@ button.onclick = async () => {
     if (result.offset_unit !== 'utf16') throw new Error('Unsupported structure coordinates');
     const evidence=structureInput(result.pages.map((page,index)=>pageEvidence(page,viewports[index])));
     record.entries = outlineEntries(result.nodes, evidence.lines, profile.value==='0'); record.profile = profile.value;
+    record.structureRevision = assets.revision;
     const missing = result.diagnostics?.find(diagnostic=>diagnostic.code==='PPDOC_LAYOUT_INCOMPLETE')?.line_ids?.length || 0;
     record.structureStatus = missing
       ? `Layout did not cover ${missing} lines, so its regions were discarded. ${record.entries.length} headings found from text. ${regioning.value === 'fast' ? 'Try Accurate for more coverage.' : 'Review the contents against the PDF.'}`

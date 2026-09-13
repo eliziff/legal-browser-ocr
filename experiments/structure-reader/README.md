@@ -18,7 +18,8 @@ are separate browser storage contexts.
 Digital PDFs open with their original text and skip OCR. Mixed PDFs retain native
 pages and recognize only the pages upstream extraction flags for OCR.
 For scanned PDFs, recognize every page to open a searchable PDF. **Detect structure** adds a
-collapsible Contents dock. General uses visual layout regions; Legislation and
+collapsible Contents dock. General uses native evidence directly for digital PDFs,
+and visual layout regions for OCR; Legislation and
 Contract use the corresponding upstream text parsers. General is the default.
 
 General offers two regioning models:
@@ -56,11 +57,12 @@ fix preserves validated layout roles when OCR has no font metrics; the shared
 heading grammar and prose demotion still decide the final graph. The optimized
 OCR runtime is unchanged. There is no browser heading grammar.
 
-Region postprocessing and assignment use the upstream public Rust API on both
-native and WASM. Cubic image preprocessing and model-output decoding functions
-that currently share a file with native inference are selected
-verbatim at build time. Upstream source changes fail the build if these boundaries
-change; no second maintained copy is checked in.
+Extraction, region assignment, image preparation, model-output decoding, raster
+separator scanning and structure derivation call public upstream Rust APIs.
+There is no source scraping or copied parser implementation. Native and WASM
+compile the same pinned sources; the browser owns rendering and worker transport.
+Every package build must pass native/WASM output parity before writing the HTML.
+CI runs that same gate on pull requests and the structure-reader branch.
 
 Model manifests pin revisions, SHA-256, label order, dimensions and the published
 0.5 output threshold. Original inference YAML files record preprocessing settings.
@@ -95,9 +97,7 @@ npm run bundle
 node experiments/structure-reader/fetch-models.mjs
 node experiments/structure-reader/build.mjs
 npm test
-node --test experiments/structure-reader/mapping.test.mjs
-cargo build --manifest-path experiments/structure-reader/Cargo.toml --bin upstream-parity --locked
-node --test experiments/structure-reader/pipeline.test.mjs
+node experiments/structure-reader/build.mjs --gate-only
 node experiments/structure-reader/native-browser.test.mjs
 ```
 

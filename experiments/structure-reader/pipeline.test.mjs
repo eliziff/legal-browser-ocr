@@ -21,7 +21,7 @@ function invoke(operation,...buffers) {
     const packed=api[operation](...args),ptr=Number(packed&0xffffffffn),length=Number(packed>>32n);
     allocations.push([ptr,length]);
     const result=JSON.parse(new TextDecoder().decode(new Uint8Array(api.memory.buffer,ptr,length)));
-    assert.equal(result.error,undefined,result.error);return result;
+    assert.equal(result?.error,undefined,result?.error);return result;
   } finally {for(const [ptr,length] of allocations)api.release(ptr,length);}
 }
 const body='The parties agree to the terms stated in this document. This paragraph is ordinary body text.';
@@ -93,4 +93,45 @@ test('native rotated pages preserve upstream geometry and OCR routing',async()=>
   assert.equal(reference.status,0,reference.stderr);
   assert.deepEqual(result,JSON.parse(reference.stdout).extracted);
   assert.deepEqual(result.metadata.pages_needing_ocr,[]);
+});
+
+// Exercise the browser ABI against native image preparation, not a copied JS algorithm.
+test('both model inputs and raster witnesses agree with native upstream',()=>{
+  const width=80,height=100,rgb=Uint8Array.from({length:width*height*3},(_,i)=>(i*37+i%19)%256);
+  const file='dist/pipeline-parity/raster.rgb';writeFileSync(file,rgb);
+  for(const variant of [0,1]){
+    const reference=spawnSync(nativeExecutable,['--raster',file,String(width),String(height),String(variant)],{encoding:'utf8'});
+    assert.equal(reference.status,0,reference.stderr);const native=JSON.parse(reference.stdout);
+    const ptr=api.allocate(rgb.length);let packed;
+    try{new Uint8Array(api.memory.buffer,ptr,rgb.length).set(rgb);packed=api.preprocess(ptr,rgb.length,width,height,variant);}finally{api.release(ptr,rgb.length);}
+    const output=Number(packed&0xffffffffn),length=Number(packed>>32n);
+    try{
+      const pixels=new Float32Array(api.memory.buffer,output,length/4);
+      native.samples.forEach((value,i)=>assert.ok(Math.abs(pixels[Math.floor(i*(pixels.length-1)/256)]-value)<1e-6,`variant ${variant}, sample ${i}`));
+    }finally{api.release(output,length);}
+    const gray=Uint8Array.from({length:width*height},(_,i)=>(rgb[i*3]*77+rgb[i*3+1]*150+rgb[i*3+2]*29)>>8);
+    assert.equal(invoke('scan_separator',gray,width,height),native.separator);
+  }
+});
+
+test('raster footnote separator survives the browser ABI in page units',()=>{
+  const width=800,height=1000,gray=new Uint8Array(width*height).fill(255);
+  for(const [top,bottom] of [[100,620],[720,950]])for(let y=top;y<bottom;y+=4)for(let row=y;row<y+2;row++)for(let x=80;x<720;x+=3)gray[row*width+x]=0;
+  for(let y=700;y<702;y++)for(let x=64;x<320;x++)gray[y*width+x]=0;
+  const rgb=Uint8Array.from({length:gray.length*3},(_,i)=>gray[Math.floor(i/3)]),file='dist/pipeline-parity/separator.rgb';writeFileSync(file,rgb);
+  const reference=spawnSync(nativeExecutable,['--raster',file,String(width),String(height),'0'],{encoding:'utf8'});
+  assert.equal(reference.status,0,reference.stderr);
+  assert.equal(JSON.parse(reference.stdout).separator,0.701);
+  assert.equal(invoke('scan_separator',gray,width,height),0.701);
+  assert.equal(invoke('scan_separator',gray.subarray(1),width,height),null);
+});
+
+for(const profile of [1,2])test(`text profile ${profile} matches its upstream public parser`,async()=>{
+  const extracted=invoke('extract_pdf',await fixture('native'));
+  const text=extracted.pages.map(page=>page.lines.map(line=>line.text).join('\n')+'\n').join('\n');
+  const file=`dist/pipeline-parity/profile-${profile}.txt`;writeFileSync(file,text);
+  const reference=spawnSync(nativeExecutable,['--text-profile',String(profile),file],{encoding:'utf8',maxBuffer:16*1024*1024});
+  assert.equal(reference.status,0,reference.stderr);const native=JSON.parse(reference.stdout);
+  const result=invoke('detect',{extracted,layouts:null},profile);
+  assert.deepEqual(result.nodes,native.nodes);assert.equal(result.offset_unit,native.offset_unit);
 });

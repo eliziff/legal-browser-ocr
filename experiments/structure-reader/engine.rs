@@ -18,7 +18,7 @@ use legal_pdf_support::ppdoc_postprocess::{self, PPDocDetection};
 mod inference {
     use image::RgbImage;
     use super::PPDocDetection;
-    include!(env!("LEGAL_BROWSER_INFERENCE"));
+    use legal_pdf_support::ppdoc_inference::{resize_opencv_cubic_nchw, postprocess};
 
     pub fn pixels(rgb: Vec<u8>, width: u32, height: u32, variant: u32) -> Vec<f32> {
         let image = RgbImage::from_raw(width, height, rgb).expect("validated RGB length");
@@ -38,7 +38,7 @@ struct DetectionInput {
     #[serde(default)] layouts: Option<Vec<Option<BrowserLayout>>>,
 }
 #[derive(Deserialize)]
-struct BrowserLayout { width: u32, height: u32, detections: Vec<PPDocDetection> }
+struct BrowserLayout { width: u32, height: u32, detections: Vec<PPDocDetection>, #[serde(default)] separator_y: Option<f64> }
 
 #[derive(Deserialize)]
 struct OcrInput {width:f64,height:f64,lines:Vec<OcrLine>}
@@ -86,6 +86,14 @@ pub unsafe extern "C" fn preprocess(ptr: *const u8, len: usize, width: u32, heig
     pack_bytes(bytes)
 }
 
+// Native OCR and browser OCR use the same raster witness scanner.
+#[no_mangle]
+pub unsafe extern "C" fn scan_separator(ptr: *const u8, len: usize, width: u32, height: u32) -> u64 {
+    pack(json!(legal_pdf_ocr::raster_separator_y_from_gray(
+        std::slice::from_raw_parts(ptr, len), width as usize, height as usize, 1.0,
+    )))
+}
+
 #[derive(Deserialize)]
 struct DecodeInput { values: Vec<f32>, width: u32, height: u32, labels: Vec<String>, threshold: f32 }
 #[no_mangle]
@@ -116,6 +124,13 @@ fn detect_input(mut input: DetectionInput, profile: u32) -> serde_json::Value {
     if profile == 0 {
         if let Some(layouts) = input.layouts {
             if layouts.len() != pages.len() { return json!({"error":"Layout page count mismatch"}); }
+            for (index, (page, layout)) in pages.iter().zip(&layouts).enumerate() {
+                if page.source == "ocr" {
+                    if let Some(y) = layout.as_ref().and_then(|layout| layout.separator_y) {
+                        input.extracted.separators[index] = Some(y * page.height);
+                    }
+                }
+            }
             let count = layouts.iter().flatten().map(|layout|layout.detections.len()).sum();
             let regions = layouts.iter().zip(pages.iter()).map(|(layout,page)| layout.as_ref().map(|layout|
                 ppdoc_postprocess::scale_detections(page.width,page.height,layout.width,layout.height,&layout.detections)

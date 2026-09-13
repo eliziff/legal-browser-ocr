@@ -2,7 +2,7 @@ name: OCR export validation
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, experiment/structure-reader]
 permissions:
   contents: read
 jobs:
@@ -18,3 +18,21 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  structure-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: |
+          version=$(cargo metadata --manifest-path experiments/structure-reader/Cargo.toml --locked --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - run: node experiments/structure-reader/build.mjs --gate-only

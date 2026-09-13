@@ -64,6 +64,14 @@ async function layoutPages(data, api) {
       const context = canvas.getContext('2d', { willReadFrequently: true });
       context.drawImage(bitmap, 0, 0); bitmap.close();
       const rgba = context.getImageData(0, 0, width, height).data;
+      const gray = new Uint8Array(width * height);
+      for (let i = 0, j = 0; i < rgba.length; i += 4) gray[j++] = (rgba[i] * 77 + rgba[i + 1] * 150 + rgba[i + 2] * 29) >> 8;
+      const scanPtr = api.allocate(gray.length);
+      let separator_y;
+      try {
+        new Uint8Array(api.memory.buffer, scanPtr, gray.length).set(gray);
+        separator_y = JSON.parse(new TextDecoder().decode(unpack(api, api.scan_separator(scanPtr, gray.length, width, height))));
+      } finally { api.release(scanPtr, gray.length); }
       const rgb = new Uint8Array(width * height * 3);
       for (let i = 0, j = 0; i < rgba.length; i += 4) { rgb[j++] = rgba[i]; rgb[j++] = rgba[i + 1]; rgb[j++] = rgba[i + 2]; }
       canvas.width = canvas.height = 1;
@@ -83,7 +91,7 @@ async function layoutPages(data, api) {
         const count = Number(outputs[model.outputNames[1]].data[0]);
         const values = Array.from(outputs[model.outputNames[0]].data.slice(0, count * 6));
         const { detections } = call(api, 'decode_boxes', { values, width, height, labels: model.labels, threshold: model.scoreThreshold });
-        layouts.push({ width, height, detections });
+        layouts.push({ width, height, detections, separator_y });
       } finally {
         for (const tensor of [...Object.values(feeds), ...Object.values(outputs)]) tensor.dispose();
       }
@@ -105,7 +113,7 @@ self.onmessage = async ({ data }) => {
     if(data.extract){self.postMessage({extracted:extract(api,data.extract),module});return;}
     const extracted=extract(api,data.pdf,data.input.pages);
     data.input.pages=extracted.pages;
-    const layouts = data.profile === 0 ? await layoutPages(data, api) : null;
+    const layouts = data.profile === 0 && extracted.pages.some(page => page.source === "ocr") ? await layoutPages(data, api) : null;
     self.postMessage({ progress: 'Building document structure…' });
     const result = call(api, 'detect', {extracted,layouts}, data.profile);
     self.postMessage({ ...result, module, layouts });

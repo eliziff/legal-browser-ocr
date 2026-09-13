@@ -18,21 +18,6 @@ for (const name of ['pdf-inspector', 'legal-structure']) {
     throw new Error(`${name} must match the pinned upstream lockfile revision`);
 }
 const env = { ...process.env };
-// These pure functions currently share a file with the native session loader.
-// Select verbatim pinned source at build time; never maintain another port.
-const native = readFileSync(join(dirname(upstream.manifest_path), 'src', 'ppdoc.rs'), 'utf8').replaceAll('\r\n', '\n');
-const section = (start, end) => {
-  const a = native.indexOf(start), b = native.indexOf(end, a + start.length);
-  if (a < 0 || b < 0) throw new Error('Upstream layout API changed; review the pinned source');
-  return native.slice(a, b);
-};
-const pure = section('const INTER_RESIZE_COEF_SCALE:', '\n') +
-  '\n' + section('#[derive(Clone, Copy)]\nstruct CubicSample', 'fn resize_bilinear_nchw(') +
-  section('fn cubic_samples(', 'fn required_path(');
-const generated = fileURLToPath(new URL('target/upstream-inference.rs', import.meta.url));
-mkdirSync(dirname(generated), { recursive: true });
-if (!existsSync(generated) || readFileSync(generated, 'utf8') !== pure) writeFileSync(generated, pure);
-env.LEGAL_BROWSER_INFERENCE = generated;
 const checking = process.argv.includes('--check');
 const result = spawnSync('cargo', [checking ? 'check' : 'build', '--lib', '--manifest-path', 'experiments/structure-reader/Cargo.toml', '--target', 'wasm32-unknown-unknown', ...checking ? [] : ['--release'], '--locked'], { cwd: root, stdio: 'inherit', env });
 if (result.error) throw result.error;
@@ -44,6 +29,17 @@ const bindgen=process.env.WASM_BINDGEN || (existsSync(localBindgen)?localBindgen
 const binding=spawnSync(bindgen,['--target','web','--omit-default-module-path','--keep-lld-exports','--out-dir','experiments/structure-reader/target/bindgen','experiments/structure-reader/target/wasm32-unknown-unknown/release/browser_structure.wasm'],{cwd:root,stdio:'inherit'});
 if(binding.error)throw binding.error;
 if(binding.status)process.exit(binding.status);
+// Packaging is downstream of the native/WASM contract gate; no unchecked package.
+for (const [command, args] of [
+  ['cargo', ['build', '--bin', 'upstream-parity', '--manifest-path', 'experiments/structure-reader/Cargo.toml', '--locked']],
+  [process.execPath, ['--test', 'experiments/structure-reader/pipeline.test.mjs', 'experiments/structure-reader/mapping.test.mjs']],
+]) {
+  const gate = spawnSync(command, args, {cwd:root,stdio:'inherit'});
+  if (gate.error) throw gate.error;
+  if (gate.status) process.exit(gate.status);
+}
+if (process.argv.includes('--gate-only')) process.exit(0);
+
 const worker = await build({ entryPoints: [fileURLToPath(new URL('worker.js', import.meta.url))], bundle: true, format: 'iife', write: false, minify: true });
 await build({ absWorkingDir: fileURLToPath(root), entryPoints: ['experiments/structure-reader/reader.js'], bundle: true, format: 'esm', minify: true, loader: { '.css': 'text' }, outfile: 'dist/structure-reader.js' });
 const assets = { worker: worker.outputFiles[0].text, wasm: readFileSync(new URL('target/bindgen/browser_structure_bg.wasm', import.meta.url)).toString('base64') };
@@ -73,8 +69,9 @@ for (const name of ['ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']
 }
 const html = source.replace(/<script type="module">[\s\S]*?<\/script>/, () => `<script>${pdfOptions}globalThis.LEGAL_STRUCTURE_ASSETS=${JSON.stringify(assets)}</script><script type="module">${app}</script>`);
 writeFileSync(join(packageDir, 'index.html'), html);
-for (const name of ['Start.ps1', 'README.md']) copyFileSync(new URL(name, import.meta.url), join(packageDir, name));
+for (const name of ['Start.ps1', 'README.md', 'VALIDATION.md']) copyFileSync(new URL(name, import.meta.url), join(packageDir, name));
 cpSync(new URL('licenses/', import.meta.url), join(packageDir, 'licenses'), { recursive: true });
+copyFileSync(join(dirname(upstream.manifest_path), '..', 'LICENSE'), join(packageDir, 'licenses', 'legal-pdf-parser-LICENSE'));
 copyFileSync(new URL('LICENSE', root), join(packageDir, 'LICENSE'));
 copyFileSync(new URL('README.md', root), join(packageDir, 'OCR-README.md'));
 for (const name of ['pdfjs-dist', 'pdf-lib', '@pdf-lib/standard-fonts', '@pdf-lib/upng', 'pako']) {
