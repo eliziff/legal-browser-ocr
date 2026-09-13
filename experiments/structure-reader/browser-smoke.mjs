@@ -177,6 +177,9 @@ try {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.locator('#edit-crop').click();
   await page.locator('#clear').click();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.locator('#ocr-preview').scrollIntoViewIfNeeded();
+  await page.screenshot({path:'dist/structure-smoke/crop-mobile.png'});
   await page.getByRole('button',{name:'Back to PDF'}).click();
   assert.equal(await page.locator('.reader-body').isVisible(),true);
   assert.equal(await page.locator('#detect-structure').isDisabled(),false);
