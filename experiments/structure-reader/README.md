@@ -61,7 +61,8 @@ Extraction, region assignment, image preparation, model-output decoding, raster
 separator scanning and structure derivation call public upstream Rust APIs.
 There is no source scraping or copied parser implementation. Native and WASM
 compile the same pinned sources; the browser owns rendering and worker transport.
-Every package build must pass native/WASM output parity before writing the HTML.
+Every package build must pass native/WASM output parity and actual offline
+JS-worker transport checks before writing the HTML.
 CI runs that same gate on pull requests and the structure-reader branch.
 
 Model manifests pin revisions, SHA-256, label order, dimensions and the published
@@ -93,6 +94,7 @@ JavaScript bindings for WASM imports:
 
 ```sh
 npm ci
+npx playwright install chromium
 npm run bundle
 node experiments/structure-reader/fetch-models.mjs
 node experiments/structure-reader/build.mjs

@@ -182,7 +182,7 @@ function confirmRemoval(record) {
 
 async function openRecord(record) {
   const token = ++generation; worker?.terminate(); worker = null;
-  if (record.structureRevision !== assets.revision) {
+  if (record.structureRevision !== globalThis.LEGAL_STRUCTURE_ASSETS.revision) {
     record.entries = []; record.structureStatus = '';
   }
   opening = true; active = record; controls(); drawTabs(); drawContents();

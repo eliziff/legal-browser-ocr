@@ -17,8 +17,22 @@ heading graph in native upstream and WASM before this fix. That graph exposed
 missing hierarchy and split wrapped titles. Private diagnostic inputs stay local
 and are not packaged or checked in.
 
+Final local checks: 12 native/WASM mapping, extraction, graph, profile and raster
+checks passed, plus both actual JS-worker parity cases from offline `file://`.
+The 22 base OCR/export tests passed. Native/mixed-PDF browser checks passed,
+including saved-ToC reload and engine-version invalidation.
+
+Chamberlain's final native detection returned 21 heading nodes in 1.16 seconds.
+Replaying the scanned copy with its captured Accurate layout returned 19 entries
+in 1.20 seconds: the three wrapped titles now stay grouped, and A/B/C headings
+retain their upstream parents. Complete pages, graph and diagnostics match native
+upstream exactly. This replay timing excludes model inference. The uncached
+24-page Accurate layout run took 260 seconds during validation; it remains slow
+in single-threaded file mode. One author byline remains a false-positive heading,
+and recognized text still contains OCR errors. These are not claimed fixed.
+
 `build.mjs` now runs the native reference and complete extraction/graph parity
-checks before creating the package. It also checks both model image preparations
+checks and the actual offline JS-worker transport before creating the package. It also checks both model image preparations
 and the shared raster separator ABI. `--gate-only` runs without downloaded OCR or
 layout models. The same command runs in CI; Cargo.lock and the upstream lockfile
 check prevent silently mixing Inspector or legal-structure revisions.

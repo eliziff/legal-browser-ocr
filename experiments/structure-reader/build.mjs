@@ -33,6 +33,7 @@ if(binding.status)process.exit(binding.status);
 for (const [command, args] of [
   ['cargo', ['build', '--bin', 'upstream-parity', '--manifest-path', 'experiments/structure-reader/Cargo.toml', '--locked']],
   [process.execPath, ['--test', 'experiments/structure-reader/pipeline.test.mjs', 'experiments/structure-reader/mapping.test.mjs']],
+  [process.execPath, ['experiments/structure-reader/worker-parity.mjs']],
 ]) {
   const gate = spawnSync(command, args, {cwd:root,stdio:'inherit'});
   if (gate.error) throw gate.error;

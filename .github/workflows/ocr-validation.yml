@@ -35,4 +35,5 @@ jobs:
       - run: |
           version=$(cargo metadata --manifest-path experiments/structure-reader/Cargo.toml --locked --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
           cargo install wasm-bindgen-cli --version "$version" --locked
+      - run: npx playwright install --with-deps chromium
       - run: node experiments/structure-reader/build.mjs --gate-only
