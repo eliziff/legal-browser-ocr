@@ -1,0 +1,33 @@
+[package]
+name = "browser-structure"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+path = "engine.rs"
+
+[[bin]]
+name = "upstream-parity"
+path = "upstream-parity.rs"
+
+[dependencies]
+legal-pdf-extraction = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "a60597c9c3aad767c836d935a029224d10c045f1" }
+legal-structure = { git = "https://github.com/eliziff/legal-structure-parser.git", rev = "939dd988c18147f26ea385b6909f0e29c662fb9e", features = ["provider-text"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+regex = "1.11"
+image = { version = "0.25", default-features = false }
+legal-pdf-support = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "a60597c9c3aad767c836d935a029224d10c045f1", features = ["ppdoc-inference"] }
+legal-pdf-core = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "a60597c9c3aad767c836d935a029224d10c045f1" }
+legal-pdf-structure = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "a60597c9c3aad767c836d935a029224d10c045f1" }
+
+legal-pdf-ocr = { git = "https://github.com/eliziff/legal-pdf-parser.git", rev = "a60597c9c3aad767c836d935a029224d10c045f1" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

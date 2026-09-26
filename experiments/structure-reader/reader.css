@@ -1,0 +1,67 @@
+.structure-app button{border-radius:.4rem;min-height:2.5rem;font-weight:600}
+.structure-app button:disabled{cursor:default}
+.structure-app #form{display:block;margin-block:1.25rem .75rem}
+.structure-app .processing-options,.structure-app .processing-actions{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem}
+.structure-app .processing-actions{margin-top:.75rem}
+.structure-app #clear{background:transparent;color:ButtonText;border:1px solid transparent}
+.structure-app button.compact{min-height:2rem;padding:.3rem .65rem;font-weight:500}
+#structure-reader{margin-block:1rem;border:1px solid #d5d7da;border-radius:.65rem;overflow:hidden;background:#fff;color-scheme:light;color:#1d2939;font:1rem/1.45 system-ui,sans-serif;box-shadow:0 1px 3px rgb(0 0 0/.08)}
+#structure-reader .reader-tabs{display:flex;align-items:end;background:#f4f5f7;border-bottom:1px solid #d5d7da;padding:.35rem .5rem 0}
+#structure-reader .reader-tabs>#open-history{margin:0 0 .35rem auto}
+#structure-reader .recent-pdfs{display:flex;gap:.2rem;overflow:auto;min-width:0}
+#structure-reader .recent-pdfs:empty{display:none}
+#structure-reader .recent-tab{display:flex;align-items:center;flex:0 0 auto;max-width:20rem;border-radius:.4rem .4rem 0 0;border:1px solid transparent;border-bottom:0}
+#structure-reader .recent-tab.active{background:#fff;border-color:#d5d7da}
+#structure-reader .recent-pdf{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;color:CanvasText;border:0;border-radius:.4rem 0 0 0;padding-inline:.75rem .35rem}
+#structure-reader .close-tab{min-height:2rem;min-width:2rem;padding:0;border:0;background:transparent;color:#667085;font-size:1.25rem;font-weight:400}
+#structure-reader .close-tab:hover{color:#b42318;background:#fee4e2}
+#structure-reader>#structure-status,#structure-reader>#storage-status{margin-inline:1rem}
+#structure-reader .reader-body{display:grid;grid-template-columns:minmax(12rem,17rem) minmax(0,1fr);border-top:1px solid #eaecf0}
+#structure-reader .reader-body.dock-collapsed{grid-template-columns:minmax(0,1fr)}
+#structure-reader .reader-body.dock-collapsed .contents{display:none}
+#structure-reader [hidden]{display:none}
+#structure-reader summary,#ocr-preview>summary{cursor:pointer;min-height:2.5rem;padding-block:.5rem;font-weight:600}
+#structure-reader .contents{background:#f8f9fa;border-inline-end:1px solid #d5d7da}
+#structure-reader .contents h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:#667085;margin:1rem .75rem .4rem}
+#structure-reader .contents nav{display:grid;max-height:75vh;overflow:auto;padding:.25rem}
+#structure-reader .contents-entry{text-align:start;overflow-wrap:anywhere;font-weight:400;background:transparent;color:CanvasText;border:0;border-radius:.25rem;padding:.5rem}
+#structure-reader .contents-entry:hover,#structure-reader .contents-entry[aria-current]{background:ButtonFace;text-decoration:underline}
+#structure-reader .reader-main{min-width:0}
+#structure-reader .reader-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:.55rem .75rem;border-bottom:1px solid #d5d7da;background:#fff}
+#structure-reader .reader-toolbar button,#structure-reader .reader-toolbar select,#structure-reader .reader-toolbar input{min-height:2.25rem}
+#structure-reader .reader-toolbar button.active{background:#e9eefb;border-color:#98a2b3}
+#structure-reader .toolbar-separator{height:1.5rem;border-inline-start:1px solid #d5d7da}
+#structure-reader .reader-toolbar label{display:flex;align-items:center;gap:.4rem;font-weight:400}
+#structure-reader #reader-page{width:4rem}
+#structure-reader .reader-viewport{position:relative;height:75vh;min-height:20rem}
+#structure-reader .reader-scroll{position:absolute;inset:0;overflow:auto;background:ButtonFace}
+#structure-reader .pdfViewer{--page-bg-color:white;--page-margin:8px auto;--page-border:0;--spreadHorizontalWrapped-margin-LR:0px}
+/* The OCR preview also uses .page; its thumbnail limits must not resize PDF.js canvases. */
+#structure-reader .pdfViewer .page{max-width:none}
+#structure-reader .pdfViewer .page canvas{max-width:none;max-height:none;outline:none}
+#storage-status:empty{display:none}
+#ocr-preview{margin-block:1rem}
+#structure-reader dialog{width:min(28rem,calc(100% - 2rem));max-height:min(32rem,calc(100% - 2rem));padding:1rem;border:1px solid GrayText;border-radius:.6rem;background:Canvas;color:CanvasText}
+#structure-reader dialog::backdrop{background:rgb(0 0 0/.45)}
+#structure-reader dialog form{display:block;margin:0}
+#structure-reader dialog header,#structure-reader .dialog-actions{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+#structure-reader dialog h2{font-size:1.15rem;margin:0 0 .75rem}
+#structure-reader .history-list{display:grid;gap:.35rem;overflow:auto}
+#structure-reader .history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.5rem;align-items:center}
+#structure-reader .history-open{text-align:start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#structure-reader .dialog-actions{justify-content:flex-end;margin-top:1rem}
+#structure-reader .danger{background:#b42318;color:white}
+#structure-reader:fullscreen{box-sizing:border-box;margin:0;padding:1rem;background:Canvas;color:CanvasText;display:flex;flex-direction:column}
+#structure-reader:fullscreen .reader-body,#structure-reader:fullscreen .reader-main{min-height:0;flex:1}
+#structure-reader:fullscreen .reader-viewport{height:auto;min-height:0;flex:1}
+#structure-reader:fullscreen .reader-main{display:flex;flex-direction:column}
+@media(max-width:48rem){#structure-reader .reader-body{grid-template-columns:1fr}#structure-reader .contents nav{max-height:25vh}#structure-reader #forget-pdf{margin-inline-start:0}}
+
+#document-progress{display:grid;gap:1rem;align-content:center;min-height:24rem;padding:2rem;max-width:36rem;margin:auto}
+#processing-progress{width:100%;height:.75rem;accent-color:#344054}
+#structure-reader .document-actions,#structure-reader .crop-actions{display:flex;flex-wrap:wrap;gap:.75rem;padding:.5rem 1rem}
+#structure-reader #ocr-preview{margin:0;padding:0 1rem 1rem}
+#structure-reader #ocr-preview .output,#structure-reader #document{display:none}
+.structure-app>main>#status{display:none}
+
+#structure-reader #ocr-preview .workspace{grid-template-columns:minmax(0,1fr)}
