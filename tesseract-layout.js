@@ -9,6 +9,7 @@ export class TesseractLayout {
     this.binaryThreshold = binaryThreshold;
     this.nextId = 0;
     this.pending = new Map();
+    this.closed = false;
     this.worker.onmessage = ({ data }) => {
       const pending = this.pending.get(data.id);
       if (!pending) return;
@@ -22,6 +23,7 @@ export class TesseractLayout {
   }
 
   async findLines(canvas) {
+    if (this.closed) throw new DOMException('Layout worker terminated', 'AbortError');
     let { width, height } = canvas;
     let x=0,y=0,cropWidth=width,cropHeight=height;
     if(this.trim){
@@ -32,14 +34,25 @@ export class TesseractLayout {
         if(cropWidth*cropHeight>=width*height*.95){x=0;y=0;cropWidth=width;cropHeight=height}
       }
     }
-    const pixels=canvas.getContext('2d').getImageData(x,y,cropWidth,cropHeight).data;width=cropWidth;height=cropHeight;
+    const bitmap = typeof OffscreenCanvas === 'function' && typeof createImageBitmap === 'function'
+      ? await createImageBitmap(canvas, x, y, cropWidth, cropHeight) : undefined;
+    if (this.closed) { bitmap?.close(); throw new DOMException('Layout worker terminated', 'AbortError'); }
+    const pixels = bitmap ? undefined : canvas.getContext('2d').getImageData(x,y,cropWidth,cropHeight).data.buffer;
+    width=cropWidth;height=cropHeight;
     const id = ++this.nextId;
     const result = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject, x, y }));
-    this.worker.postMessage({ id, pixels: pixels.buffer, width, height, corePath: this.corePath, wasmPath: this.wasmPath, sourceResolution: this.sourceResolution, psm: this.psm, binaryThreshold: this.binaryThreshold }, [pixels.buffer]);
+    try {
+      this.worker.postMessage({ id, bitmap, pixels, width, height, corePath: this.corePath, wasmPath: this.wasmPath, sourceResolution: this.sourceResolution, psm: this.psm, binaryThreshold: this.binaryThreshold }, [bitmap ?? pixels]);
+    } catch (error) {
+      bitmap?.close(); this.pending.get(id).reject(error); this.pending.delete(id);
+    }
     return result;
   }
 
   terminate() {
+    this.closed = true;
     this.worker.terminate();
+    for (const pending of this.pending.values()) pending.reject(new DOMException('Layout worker terminated', 'AbortError'));
+    this.pending.clear();
   }
 }
