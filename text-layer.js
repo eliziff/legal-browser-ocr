@@ -1,6 +1,36 @@
 // OCR geometry is measured in rendered/cropped pixels, not PDF points.
+const softWrap = /(\p{L}\p{M}*)\u00ad[\t\p{Zs}]*(?:\r\n|\r(?!\n)|[\n\u2028\u2029])[\t\p{Zs}]*(?=\p{L})/gu;
+const wordMarker = /\u00ac([\t\p{Zs}]*)(?:((?:\r\n|\r(?!\n)|[\n\u2028\u2029])[\t\p{Zs}]*)(?=\p{Ll})|$)/gu;
+
 export function cleanModelText(value) {
-  return value.replace(/[\u00ad\u00ac]\r?\n/g, '').replace(/[\u00ad\u00ac]/g, '');
+  const text = value.replace(softWrap, '$1').replace(/\u00ad/g, '');
+  const parts = [];
+  let from = 0, letters = 0, lowercase = false;
+  const append = chunk => {
+    parts.push(chunk);
+    for (const character of chunk) {
+      if (/\p{L}/u.test(character)) {
+        letters = Math.min(2, letters + 1);
+        lowercase ||= /\p{Ll}/u.test(character);
+      } else if (!/\p{M}/u.test(character)) {
+        letters = 0;
+        lowercase = false;
+      }
+    }
+  };
+  // Match markers first, then scan each preceding chunk once. Token regexes
+  // can repeatedly backtrack through a long OCR word that contains no marker.
+  for (const match of text.matchAll(wordMarker)) {
+    append(text.slice(from, match.index));
+    // Some models use a word-final NOT sign as a discretionary marker.
+    // Literal operators and single-letter variables remain unchanged; a
+    // lowercase word ending is still ambiguous without model metadata.
+    if (letters >= 2 && lowercase) append(match[2] ? '' : match[1]);
+    else append(match[0]);
+    from = match.index + match[0].length;
+  }
+  parts.push(text.slice(from));
+  return parts.join('');
 }
 
 export function positionedLines(lines, texts) {
@@ -9,7 +39,7 @@ export function positionedLines(lines, texts) {
     const box = line.ocrBox || line;
     return {
       x: box.x ?? 0, y: box.y ?? 0, width: box.width, height: box.height,
-      text: cleanModelText(texts[index]).replace(/[\r\n\t]/g, ' '),
+      text: cleanModelText(texts[index]).replace(/\r\n|[\r\n\u2028\u2029\t]/g, ' '),
     };
   }).filter(line => line.text.trim());
 }

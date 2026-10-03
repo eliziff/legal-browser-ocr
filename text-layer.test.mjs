@@ -41,3 +41,35 @@ test('rejects invalid geometry rather than exporting unusable text', () => {
 test('ToUnicode encodes accents, symbols, ligatures and supplementary characters without loss', () => {
   assert.equal(unicodeHex('é§ﬃ😀'), '00E900A7FB03D83DDE00');
 });
+
+test('OCR cleanup preserves literal negation, quotations and bilingual citations', () => {
+  for (const text of ['« ¬p signifie non p »; 2025 CSC 18', '“¬” and “national¬”',
+    '¬(P ∧ Q)', 'P ∧ ¬Q', 'alpha¬beta', 'P¬\nQ', 'p¬\nq', 'a hard-\nhyphen',
+    'R. c. Co\u0302té, 2025\u00a0CSC\u00a018; « déjà vu 🧭 »']) {
+    assert.equal(cleanModelText(text), text);
+  }
+  assert.equal(cleanModelText('inter¬\nnational¬'), 'international');
+  assert.equal(cleanModelText('national¬  '), 'national  ');
+  assert.equal(cleanModelText('ab¬\nc¬\nde'), 'abcde');
+  for (const text of ['a'.repeat(30000), '¬ '+ 'a'.repeat(30000)]) {
+    assert.equal(cleanModelText(text), text);
+  }
+});
+
+test('discretionary wraps consume one logical boundary and preserve blank paragraphs', () => {
+  for (const boundary of ['\n', '\r\n', '\r', '\u2028', '\u2029']) {
+    const text='e\u0301\u00ad \t'+boundary+'\u202fcole';
+    assert.equal(cleanModelText(text), 'e\u0301cole');
+    assert.equal(cleanModelText('inter\u00ad'+boundary+boundary+'national'), 'inter'+boundary+boundary+'national');
+    assert.equal(cleanModelText('§\u00ad'+boundary+'7'), '§'+boundary+'7');
+  }
+  assert.equal(cleanModelText('inter\u00ad\nna\u00ad\ntional'), 'international');
+});
+
+test('positioned lines fold logical breaks once without changing geometry or source spacing', () => {
+  const line={x:3,y:7,width:80,height:12};
+  for (const boundary of ['\n', '\r\n', '\r', '\u2028', '\u2029']) {
+    assert.deepEqual(positionedLines([line], ['Québec'+boundary+'« ¬p »\u00a0  CSC']),
+      [{...line,text:'Québec « ¬p »\u00a0  CSC'}]);
+  }
+});
