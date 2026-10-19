@@ -1,5 +1,5 @@
 export class TesseractLayout {
-  constructor({ workerPath = './tesseract-layout-worker.js', corePath = './dist/layout-core.mjs', wasmPath = './dist/layout-core.wasm', sourceResolution = 200, trim = false, psm = 3, binaryThreshold = 0 } = {}) {
+  constructor({ workerPath = './tesseract-layout-worker.js', corePath = './dist/layout-core.mjs', wasmPath = './dist/layout-core.wasm', sourceResolution = 200, trim = false, psm = 3, binaryThreshold = 0, modelOptions } = {}) {
     this.worker = new Worker(workerPath);
     this.corePath = new URL(corePath, location.href).href;
     this.wasmPath = new URL(wasmPath, location.href).href;
@@ -7,6 +7,9 @@ export class TesseractLayout {
     this.trim = trim;
     this.psm = psm;
     this.binaryThreshold = binaryThreshold;
+    this.modelOptions = modelOptions;
+    if(modelOptions)for(const key of ['modelPath','configPath','runtimeMjs','runtimeWasm'])
+      modelOptions[key]=new URL(modelOptions[key],location.href).href;
     this.nextId = 0;
     this.pending = new Map();
     this.closed = false;
@@ -14,6 +17,7 @@ export class TesseractLayout {
       const pending = this.pending.get(data.id);
       if (!pending) return;
       this.pending.delete(data.id);
+      if(pending.timing)Object.assign(pending.timing,data.timing);
       data.error ? pending.reject(new Error(data.error)) : pending.resolve(data.lines.map(line=>({x0:line.x0+pending.x,y0:line.y0+pending.y,x1:line.x1+pending.x,y1:line.y1+pending.y})));
     };
     this.worker.onerror = error => {
@@ -22,7 +26,7 @@ export class TesseractLayout {
     };
   }
 
-  async findLines(canvas) {
+  async findLines(canvas,timing) {
     if (this.closed) throw new DOMException('Layout worker terminated', 'AbortError');
     let { width, height } = canvas;
     let x=0,y=0,cropWidth=width,cropHeight=height;
@@ -40,9 +44,9 @@ export class TesseractLayout {
     const pixels = bitmap ? undefined : canvas.getContext('2d').getImageData(x,y,cropWidth,cropHeight).data.buffer;
     width=cropWidth;height=cropHeight;
     const id = ++this.nextId;
-    const result = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject, x, y }));
+    const result = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject, x, y, timing }));
     try {
-      this.worker.postMessage({ id, bitmap, pixels, width, height, corePath: this.corePath, wasmPath: this.wasmPath, sourceResolution: this.sourceResolution, psm: this.psm, binaryThreshold: this.binaryThreshold }, [bitmap ?? pixels]);
+      this.worker.postMessage({ id, bitmap, pixels, width, height, corePath: this.corePath, wasmPath: this.wasmPath, sourceResolution: this.sourceResolution, psm: this.psm, binaryThreshold: this.binaryThreshold, modelOptions: this.modelOptions, profile: Boolean(timing) }, [bitmap ?? pixels]);
     } catch (error) {
       bitmap?.close(); this.pending.get(id).reject(error); this.pending.delete(id);
     }

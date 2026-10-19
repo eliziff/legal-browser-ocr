@@ -6,12 +6,13 @@ async function start(corePath, wasmPath) {
   return { core, api: core._kl_create() };
 }
 
-self.onmessage = async ({ data: { id, bitmap, pixels, width, height, corePath, wasmPath, sourceResolution = 200, psm = 3, binaryThreshold = 0 } }) => {
+self.onmessage = async ({ data: { id, bitmap, pixels, width, height, corePath, wasmPath, sourceResolution = 200, psm = 3, binaryThreshold = 0, profile = false } }) => {
   let canvas, image, boxes, core;
   try {
     ready ||= start(corePath, wasmPath);
     const initialized = await ready;
     core = initialized.core;
+    const started=profile?performance.now():0;
     const { api } = initialized;
     if (bitmap) {
       canvas = new OffscreenCanvas(width, height);
@@ -28,6 +29,7 @@ self.onmessage = async ({ data: { id, bitmap, pixels, width, height, corePath, w
     boxes = core._malloc(capacity * 16);
     const useBinary=Boolean(binaryThreshold&&core._kl_lines_binary),find=useGray?core._kl_lines_gray:useBinary?core._kl_lines_binary:(core._kl_lines_dpi||core._kl_lines);
     const call=()=>useGray?find(api,image,width,height,boxes,capacity):useBinary?find(api,image,width,height,boxes,capacity,sourceResolution,binaryThreshold):core._kl_lines_dpi?find(api,image,width,height,boxes,capacity,sourceResolution):find(api,image,width,height,boxes,capacity);
+    const detectionStarted=profile?performance.now():0;
     let count = call();
     if (count < 0) {
       capacity = -count;
@@ -40,7 +42,7 @@ self.onmessage = async ({ data: { id, bitmap, pixels, width, height, corePath, w
       const [x0, y0, x1, y1] = core.HEAP32.subarray(offset, offset + 4);
       return { x0, y0, x1, y1 };
     });
-    self.postMessage({ id, lines });
+    self.postMessage({ id, lines, ...(profile&&{timing:{layout_prepare_seconds:(detectionStarted-started)/1000,layout_detect_seconds:(performance.now()-detectionStarted)/1000}}) });
   } catch (error) {
     self.postMessage({ id, error: error.message });
   } finally {

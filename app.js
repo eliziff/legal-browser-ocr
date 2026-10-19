@@ -2,34 +2,54 @@ import * as ort from 'onnxruntime-web/wasm';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/build/pdf.mjs';
 import { TesseractLayout } from './tesseract-layout.js';
 import { orderLayoutLines } from './layout-order.js';
-import { preprocessLine } from './line-preprocess.js';
-import { documentWorkers, recognitionWorkers } from './worker-policy.js';
+import { documentWorkers } from './worker-policy.js';
 import { cleanModelText, positionedLines, cropToPdfTransform } from './text-layer.js';
 import { createSearchablePdf } from './pdf-export.js';
+import { LineRecognizer, recognizerProfile } from './recognizer.js';
+import { setThumbnail } from './experiments/ocr-speed/preview.js';
+import { memoryOptions } from './experiments/ocr-speed/session-options.js';
+import { ocrModels, ocrTier } from './ocr-tiers.js';
 
 const embedded = globalThis.LEGAL_OCR_ASSETS;
 const experimental = new URLSearchParams(location.search);
-const bundledLayout = !embedded || Boolean(embedded.layoutCore);
-const workerPoolSize = experimental.has('pool')?Number(experimental.get('pool')):bundledLayout?recognitionWorkers(navigator.hardwareConcurrency):0;
+const recognizer = recognizerProfile('indra');
+let tier = ocrTier(experimental.get('tier') || 'balanced');
+const requestedBackend = experimental.get('backend') || 'auto';
+if (!['auto', 'cpu', 'webgpu'].includes(requestedBackend)) throw new Error(`Unknown processing device: ${requestedBackend}`);
+let backend = 'wasm';
+if (requestedBackend !== 'cpu') {
+  try {
+    const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+    if (adapter && !adapter.isFallbackAdapter && adapter.features.has('shader-f16')) backend = 'webgpu';
+    else if (requestedBackend === 'webgpu') throw new Error('A WebGPU device with shader-f16 is required.');
+  } catch (error) { if (requestedBackend === 'webgpu') throw error; }
+}
+const collectTimings = experimental.get('timing') === '1';
+const previewMode = experimental.get('preview') || 'none';
+const thumbnailPreviews = previewMode === 'thumbnail';
+const omitPreviews = previewMode === 'none';
+const detector = experimental.get('detector') === 'tesseract' ? null : experimental.get('detector') || 'indra';
+if (detector && !['indra', 'paddle'].includes(detector)) throw new Error(`Unknown detector: ${detector}`);
+const detectorLimit=experimental.get('detectorLimit');
+if(detectorLimit&&!['min','max'].includes(detectorLimit))throw new Error(`Unknown detector resize limit: ${detectorLimit}`);
+const workerPoolSize = experimental.has('pool') ? Number(experimental.get('pool')) : backend === 'webgpu' ? 1 : Math.min(6, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 2)));
 const fullRuntime = experimental.get('runtime') === 'full';
 const runtimeStem = experimental.get('runtime') === 'relaxed' ? 'ort-wasm-relaxedsimd' : 'ort-wasm-simd';
 const debugRuntime = experimental.get('debug') === '1';
 const requestedThreads = Number(experimental.get('threads')) || (workerPoolSize?1:4);
 const threadCount = crossOriginIsolated ? Math.min(requestedThreads, navigator.hardwareConcurrency || 4) : 1;
 const runtimeSuffix = '-threaded';
-let batchSize = Number(experimental.get('batch')) || 32;
+let batchSize = Number(experimental.get('batch')) || (backend === 'webgpu' ? 32 : recognizer.batchSize);
 let bucketSize = Number(experimental.get('bucket')) || 24;
-const yieldEachBatch = experimental.get('yield') === '1';
-const sortedBatches = experimental.get('sort') === '1';
-const inputPadding = experimental.has('pad') ? Number(experimental.get('pad')) : 16;
+const sortedBatches = experimental.has('sort') ? experimental.get('sort') === '1' : backend === 'webgpu';
+const pageBatch = Number(experimental.get('pageBatch') || (backend === 'webgpu' ? 4 : 1));
+if (!Number.isInteger(pageBatch) || pageBatch < 1 || pageBatch > 4) throw new Error('pageBatch must be between 1 and 4');
 const scaleOverride = Number(experimental.get('scale')) || 0;
-const preprocessing = experimental.get('pre') || 'none';
 const modelPath = experimental.get('model');
 const graphOptimizationLevel = experimental.get('opt') || 'all';
-const fixedWidths = (experimental.get('widths') || '').split(',').map(Number).filter(Boolean).sort((a,b)=>a-b);
-const reuseBuffers = experimental.get('reuse') !== '0';
+const sessionOptions = {graphOptimizationLevel,...memoryOptions(experimental)};
 const atlasBatch = experimental.get('atlas') !== '0';
-const layoutWorkerCount = Math.max(1,Number(experimental.get('layoutWorkers'))||(workerPoolSize?2:1));
+const layoutWorkerCount = Math.max(1, Number(experimental.get('layoutWorkers')) || (backend === 'webgpu' ? 1 : Math.min(4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 3)))));
 const layoutScale = Number(experimental.get('layoutScale'))||1;
 const trimLayout = experimental.get('layoutTrim')==='1';
 const layoutPsm = Number(experimental.get('layoutPsm'))||3;
@@ -40,7 +60,7 @@ const collectConfidence = retryThreshold > 0 || experimental.get('confidence') =
 const decodeAsset = value => Uint8Array.from(atob(value), character => character.charCodeAt(0));
 const assetUrl = (name, fallback, type = 'application/javascript') => embedded?.[name]
   ? `data:${type};base64,${embedded[name]}` : fallback;
-const assetBytes = async (name, fallback) => embedded?.[name] ? decodeAsset(embedded[name]) : fetch(fallback).then(response => response.arrayBuffer());
+const assetBytes = async (name, fallback) => embedded?.[name] ? decodeAsset(embedded[name]) : fetch(fallback).then(response => { if (!response.ok) throw new Error(`Asset load failed: ${fallback} (${response.status})`); return response.arrayBuffer(); });
 
 GlobalWorkerOptions.workerSrc = assetUrl('pdfWorker', './dist/pdf.worker.min.mjs');
 const runtimePaths = embedded ? {
@@ -50,24 +70,34 @@ const runtimePaths = embedded ? {
   mjs: new URL(`./dist/${runtimeStem}${runtimeSuffix}.mjs`, location.href).href,
   wasm: new URL(`./dist/${runtimeStem}${runtimeSuffix}.wasm`, location.href).href,
 };
+const gpuRuntimePaths = {
+  mjs: assetUrl('gpuMjs', new URL('./dist/ort-wasm-simd-threaded.jsep.mjs', location.href).href),
+  wasm: assetUrl('gpuWasm', new URL('./dist/ort-wasm-simd-threaded.jsep.wasm', location.href).href, 'application/wasm'),
+};
 ort.env.wasm.wasmPaths = runtimePaths;
 ort.env.wasm.numThreads = threadCount;
 if (debugRuntime) ort.env.logLevel = 'verbose';
 
 const $ = id => document.getElementById(id);
 const pageCanvas = $('page'), overlay = $('overlay'), status = $('status'), text = $('text');
+$('terms').href=assetUrl('packageNotice', './assets/manifest.json', 'application/json');
 if (experimental.has('seg')) $('segmentation').value = experimental.get('seg');
 const context = pageCanvas.getContext('2d'), overlayContext = overlay.getContext('2d');
 let session, modelBytes, labels, pdf, imageBitmap, crop, cropTemplate, dragStart;
 let sessionPromise;
-let loadedFile = null, ocrPages = null, busy = false, poolError = null;
-let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[],poolTaskId=0;
-let tensorScratch = new Float32Array(), lengthsScratch = new BigInt64Array();
-const fixedSessions = new Map();
-const lineHeight = 48;
-const batchCanvas=document.createElement('canvas'),batchContext=batchCanvas.getContext('2d',{willReadFrequently:true});
+let lineRecognizer;
+let loadedFile = null, ocrPages = null, busy = false, poolError = null, modelReady = false;
+let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[];
+let recognitionSlots=[];
+let poolFlush;
 const hasTesseractLayout = !embedded || Boolean(embedded.layoutCore);
 const layoutOptions={workerPath:assetUrl('layoutWorker','./tesseract-layout-worker.js'),corePath:assetUrl('layoutCore','./assets/layout-core.mjs'),wasmPath:assetUrl('layoutWasm','./assets/layout-core.wasm','application/wasm'),sourceResolution:Math.round(200*layoutScale),trim:trimLayout,psm:layoutPsm,binaryThreshold:layoutBinaryThreshold};
+if(detector){
+  layoutOptions.workerPath=assetUrl('detectorWorker','./dist/detector-worker.js');
+  const layoutRuntime = backend === 'webgpu' ? gpuRuntimePaths : runtimePaths;
+  layoutOptions.modelOptions={backend:detector,executionProvider:backend,modelPath:assetUrl(`${detector}Detector`,`./assets/detectors/${detector}/model.onnx`,'application/octet-stream'),configPath:assetUrl('detectorConfig','./assets/detectors/config.json','application/json'),runtimeMjs:layoutRuntime.mjs,runtimeWasm:layoutRuntime.wasm,longSide:Number(experimental.get('detectorSide'))||tier.detectorSide,limitType:detectorLimit||undefined,sessionOptions};
+  $('segmentation').querySelector('[value="tesseract"]').textContent=detector==='indra'?'Indra line detection':'Paddle line detection';
+}
 const layouts=hasTesseractLayout?Array.from({length:layoutWorkerCount},()=>new TesseractLayout(layoutOptions)):[];
 let idleLayouts=[],layoutQueue=[];
 idleLayouts.push(...layouts);
@@ -77,71 +107,121 @@ if (!hasTesseractLayout) {
   $('segmentation').value = 'fast';
 }
 
-const ready = (async () => {
+async function loadRecognizer() {
+  modelReady=false;
+  for (const slot of recognitionSlots) slot.worker.terminate();
+  recognitionSlots=[];idleWorkers=[];poolError=null;
+  if (session) await session.release();
+  session=sessionPromise=lineRecognizer=undefined;
+  const pack = ocrModels[tier.model];
   const [codec, model] = await Promise.all([
-    embedded ? JSON.parse(new TextDecoder().decode(decodeAsset(embedded.codec))) : fetch('./assets/codec.json').then(r => r.json()),
-    assetBytes('model', modelPath || './assets/model.ort'),
+    assetBytes(pack.codec, './'+pack.codec).then(bytes=>JSON.parse(new TextDecoder().decode(bytes))),
+    assetBytes(pack.cpu, modelPath || './'+pack.cpu),
     layoutReady,
   ]);
   modelBytes = model;
   labels = Object.fromEntries(Object.entries(codec).flatMap(([character, ids]) => ids.map(id => [id, character])));
-  if(workerPoolSize)poolReady=initializeRecognitionPool(codec,model);
+  if(workerPoolSize) {
+    const workerModel = backend === 'webgpu' ? await assetBytes(pack.gpu, './'+pack.gpu) : model;
+    poolReady=initializeRecognitionPool(codec,workerModel);
+  }
   else await ensureMainSession();
   await poolReady;
-  status.textContent = 'Model ready. Select a PNG or PDF.';
+  modelReady=true;
+  status.textContent = `Model ready (${tier.label}, ${backend === 'webgpu' ? 'GPU' : 'CPU'}). ${loadedFile ? 'Ready to recognize.' : 'Select a PNG or PDF.'}`;
   $('all').disabled = busy || !loadedFile;
-})();
+}
+let ready = loadRecognizer();
 ready.catch(error => { status.textContent = `Model failed to load: ${error.message}`; });
+$('mode').disabled=true;
+ready.then(()=>setBusy(busy),()=>setBusy(busy));
+$('mode').value = experimental.get('tier') || 'balanced';
+$('mode').onchange = async () => {
+  if (busy) return;
+  invalidateOcr();setBusy(true);
+  const previous = tier;
+  tier = ocrTier($('mode').value);
+  if (layoutOptions.modelOptions) layoutOptions.modelOptions.longSide = tier.detectorSide;
+  try {
+    if (previous.model !== tier.model) ready = loadRecognizer();
+    await ready;
+    status.textContent = `${tier.label} ready${tier.model === 'light' ? ' · higher error rate' : ''}.`;
+  } catch (error) { status.textContent = `Model failed to load: ${error.message}`; }
+  finally { setBusy(false); }
+};
+$('segmentation').onchange=()=>{if(!busy)invalidateOcr()};
+window.legalOcrConfiguration=()=>({backend,tier:$('mode').value,model:tier.model,workerPoolSize,layoutWorkerCount,batchSize,pageBatch,detectorSide:layoutOptions.modelOptions?.longSide});
 
 function ensureMainSession(){
-  return sessionPromise||=(ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],graphOptimizationLevel,...(debugRuntime&&{logSeverityLevel:0,logVerbosityLevel:1})}).then(value=>session=value));
+  return sessionPromise||=(ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],...sessionOptions,...(debugRuntime&&{logSeverityLevel:0,logVerbosityLevel:1})}).then(value=>session=value));
 }
 
 function pumpRecognitionPool(){
-  while(idleWorkers.length&&poolQueue.length){const slot=idleWorkers.pop(),task=poolQueue.shift();slot.task=task;slot.worker.postMessage({type:'recognize',id:task.id,bitmap:task.bitmap,lines:task.lines,scale:task.scale},[task.bitmap])}
+  if(poolFlush&&poolQueue.length<pageBatch)return;
+  while(idleWorkers.length&&poolQueue.length){
+    const slot=idleWorkers.pop(),tasks=[poolQueue.shift()];
+    while(tasks.length<pageBatch&&poolQueue[0]?.scale===tasks[0].scale)tasks.push(poolQueue.shift());
+    slot.tasks=tasks;
+    slot.worker.postMessage({type:'recognize',scale:tasks[0].scale,pages:tasks.map(task=>({bitmap:task.bitmap,lines:task.lines}))},tasks.map(task=>task.bitmap));
+  }
 }
 
 function pumpLayoutPool(){
-  while(idleLayouts.length&&layoutQueue.length){const worker=idleLayouts.pop(),task=layoutQueue.shift();worker.findLines(task.canvas).then(task.resolve,task.reject).finally(()=>{idleLayouts.push(worker);pumpLayoutPool()})}
+  while(idleLayouts.length&&layoutQueue.length){const worker=idleLayouts.pop(),task=layoutQueue.shift();worker.findLines(task.canvas,task.timing).then(task.resolve,task.reject).finally(()=>{idleLayouts.push(worker);pumpLayoutPool()})}
 }
 
-async function findLayoutLines(canvas){
-  await layoutReady;return new Promise((resolve,reject)=>{layoutQueue.push({canvas,resolve,reject});pumpLayoutPool()});
+async function findLayoutLines(canvas,timing){
+  await layoutReady;return new Promise((resolve,reject)=>{layoutQueue.push({canvas,timing,resolve,reject});pumpLayoutPool()});
 }
 
 async function initializeRecognitionPool(codec,model){
   const workerUrl=assetUrl('recognitionWorker','./dist/recognition-worker.js');
   const slots=await Promise.all(Array.from({length:workerPoolSize},()=>new Promise((resolve,reject)=>{
-    const worker=new Worker(workerUrl),slot={worker,task:null};
+    const worker=new Worker(workerUrl),slot={worker,tasks:null};recognitionSlots.push(slot);
     worker.onmessage=({data})=>{
       if(data.type==='ready'){idleWorkers.push(slot);resolve(slot);pumpRecognitionPool();return}
-      const task=slot.task;slot.task=null;
+      const tasks=slot.tasks;slot.tasks=null;
       if(data.type==='error'){
-        if(!task){reject(new Error(data.message));return}
-        task.reject(new Error(data.message));
-      }else if(task)task.resolve(task.includeLines?data.lines:data.text);
+        if(!tasks){reject(new Error(data.message));return}
+        for(const task of tasks)task.reject(new Error(data.message));
+      }else if(tasks){
+        const count=tasks.reduce((sum,task)=>sum+task.lines.length,0);
+        tasks.forEach((task,index)=>{
+          if(task.timing&&data.timing){
+            // Shared batch work is attributed by line count, not individual page latency.
+            const fraction=count?task.lines.length/count:1/tasks.length;
+            Object.assign(task.timing,Object.fromEntries(Object.entries(data.timing).map(([key,value])=>[key,value*fraction])),{recognition_batch_pages:tasks.length});
+          }
+          task.resolve(task.includeLines?data.pages[index].lines:data.pages[index].text);
+        });
+      }
       idleWorkers.push(slot);pumpRecognitionPool();
     };
     worker.onerror=event=>{
       poolError=new Error(`${event.message||'Recognition worker failed'}. Reload this app to retry.`);
-      reject(poolError);slot.task?.reject(poolError);slot.task=null;
+      reject(poolError);for(const task of slot.tasks||[])task.reject(poolError);slot.tasks=null;
       idleWorkers=idleWorkers.filter(value=>value!==slot);
       for(const task of poolQueue.splice(0)){task.bitmap.close();task.reject(poolError)}
     };
-    worker.postMessage({type:'init',runtimeMjs:runtimePaths.mjs,runtimeWasm:runtimePaths.wasm,model:model.slice(0),codec,batchSize,bucketSize,padding:inputPadding});
+    const runtime=backend==='webgpu'?gpuRuntimePaths:runtimePaths;
+    worker.postMessage({type:'init',backend,runtimeMjs:runtime.mjs,runtimeWasm:runtime.wasm,model:model.slice(0),codec,recognizer:recognizer.id,timing:collectTimings,batchSize,bucketSize,sortedBatches,sessionOptions});
   })));
   return slots;
 }
 
-async function recognizeInPool(bitmap,lines,scale,includeLines=false){
+async function recognizeInPool(bitmap,lines,scale,includeLines=false,timing){
   try{await poolReady;if(poolError)throw poolError}catch(error){bitmap.close();throw error}
-  return new Promise((resolve,reject)=>{poolQueue.push({id:++poolTaskId,bitmap,lines,scale,includeLines,resolve,reject});pumpRecognitionPool()});
+  return new Promise((resolve,reject)=>{
+    poolQueue.push({bitmap,lines,scale,includeLines,timing,resolve,reject});
+    if(pageBatch>1&&!poolFlush)poolFlush=setTimeout(()=>{poolFlush=null;pumpRecognitionPool()},8);
+    pumpRecognitionPool();
+  });
 }
 
 function setBusy(value) {
   busy=value;
   for(const id of ['file','segmentation','mode','clear'])$(id).disabled=value;
-  $('all').disabled=value||!loadedFile;
+  $('all').disabled=value||!loadedFile||!modelReady;
   $('download').disabled=value||!ocrPages;
 }
 function invalidateOcr() {
@@ -237,10 +317,10 @@ function withoutRunningHeader(lines, source) {
   return rule?lines.filter(line=>Number(line.dataset.y||0)>Number(rule.dataset.y)):lines;
 }
 
-async function tesseractLines(source) {
+async function tesseractLines(source,timing) {
   let layoutSource=source;
   if(layoutScale!==1){layoutSource=document.createElement('canvas');layoutSource.width=Math.max(1,Math.round(source.width*layoutScale));layoutSource.height=Math.max(1,Math.round(source.height*layoutScale));layoutSource.getContext('2d').drawImage(source,0,0,layoutSource.width,layoutSource.height)}
-  let boxes=await findLayoutLines(layoutSource);
+  let boxes=await findLayoutLines(layoutSource,timing);
   if(layoutScale!==1)boxes=boxes.map(box=>({x0:box.x0*source.width/layoutSource.width,y0:box.y0*source.height/layoutSource.height,x1:box.x1*source.width/layoutSource.width,y1:box.y1*source.height/layoutSource.height}));
   boxes = orderLayoutLines(boxes, source.width, source.height);
   if(atlasBatch)return boxes.map(box=>({source,ocrBox:{x:box.x0,y:box.y0,width:box.x1-box.x0,height:box.y1-box.y0},x:Math.max(0,box.x0-10),y:Math.max(0,box.y0-6),width:Math.max(1,Math.min(source.width,box.x1+11)-Math.max(0,box.x0-10)),height:Math.max(1,Math.min(source.height,box.y1+7)-Math.max(0,box.y0-6))}));
@@ -255,77 +335,34 @@ async function tesseractLines(source) {
   });
 }
 
-function preparedWidth(line,scale){return Math.max(1,Math.round(line.width*lineHeight/line.height*scale))+inputPadding*2}
-
-function drawPrepared(ctx,line,x,y,width){
-  const drawn=width-inputPadding*2;
-  if(line.source)ctx.drawImage(line.source,line.x,line.y,line.width,line.height,x+inputPadding,y,drawn,lineHeight);
-  else ctx.drawImage(line,x+inputPadding,y,drawn,lineHeight);
-}
-
-function prepareAtlas(batch,max) {
-  batchCanvas.width=max;batchCanvas.height=batch.length*lineHeight;batchContext.fillStyle='white';batchContext.fillRect(0,0,batchCanvas.width,batchCanvas.height);
-  batch.forEach((item,n)=>drawPrepared(batchContext,item.line,0,n*lineHeight,item.width));
-  const rgba=batchContext.getImageData(0,0,batchCanvas.width,batchCanvas.height).data,tensorLength=batch.length*lineHeight*max;
-  if(reuseBuffers&&tensorScratch.length<tensorLength)tensorScratch=new Float32Array(tensorLength);
-  const tensor=reuseBuffers?tensorScratch.subarray(0,tensorLength):new Float32Array(tensorLength);
-  if(preprocessing==='none')for(let i=0;i<tensorLength;i++){const p=i*4;tensor[i]=1-(rgba[p]+rgba[p+1]+rgba[p+2])/(3*255)}
-  else for(let n=0;n<batch.length;n++){const line=new Uint8ClampedArray(lineHeight*max*4);for(let y=0;y<lineHeight;y++){const start=(n*lineHeight+y)*max*4;line.set(rgba.subarray(start,start+max*4),y*max*4)}tensor.set(preprocessLine(line,max,lineHeight,preprocessing),n*lineHeight*max)}
-  return tensor;
-}
-
-function prepare(line, scale) {
-  const height=lineHeight;
-  const width=Math.max(1,Math.round(line.width*height/line.height*scale)),padding=inputPadding,inputWidth=width+padding*2;
-  const c=document.createElement('canvas');c.width=inputWidth;c.height=height;const ctx=c.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,inputWidth,height);ctx.drawImage(line,padding,0,width,height);
-  const rgba=ctx.getImageData(0,0,inputWidth,height).data,data=preprocessLine(rgba,inputWidth,height,preprocessing);
-  return {data,width:inputWidth};
-}
-
-function decode(output,n,validSteps) {
-  const d=output.dims,data=output.data,classes=d[1],steps=d[d.length-1],stride=classes*steps;let previous=0,result='',confidence=0,emissions=0;
-  for(let t=0;t<Math.min(steps,validSteps);t++){let best=0,maximum=-Infinity;for(let c=0;c<classes;c++){const value=data[n*stride+c*steps+t];if(value>maximum){maximum=value;best=c}}if(best&&best!==previous){result+=labels[best]||'';if(collectConfidence){confidence+=maximum;emissions++}}previous=best}return collectConfidence?{text:result,confidence:emissions?confidence/emissions:0}:{text:result};
-}
-
-function decodeIds(output,n,validSteps) {
-  const steps=output.dims.at(-1),stride=output.size/output.dims[0];let previous=0,result='';
-  for(let t=0;t<Math.min(steps,validSteps);t++){const best=Number(output.data[n*stride+t]);if(best&&best!==previous)result+=labels[best]||'';previous=best}
-  return {text:result};
-}
-
-async function inferenceSession(width) {
-  const fixed=fixedWidths.find(value=>value>=width);
-  if(!fixed)return {runner:session,width};
-  if(!fixedSessions.has(fixed))fixedSessions.set(fixed,ort.InferenceSession.create(modelBytes,{
-    executionProviders:['wasm'],graphOptimizationLevel,freeDimensionOverrides:{width:fixed}
-  }));
-  return {runner:await fixedSessions.get(fixed),width:fixed};
-}
-
 async function infer(lines,scale,allowRetry=true) {
   await ensureMainSession();
-  const results=new Array(lines.length),items=lines.map((line,index)=>atlasBatch?{line,width:preparedWidth(line,scale),index}:{...prepare(line,scale),index}),groups=new Map();
-  if(sortedBatches)groups.set(0,items.sort((a,b)=>a.width-b.width));else items.forEach(item=>{const key=Math.ceil(item.width/bucketSize);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(item)});let done=0;
-  for(const group of groups.values())for(let offset=0;offset<group.length;offset+=batchSize){const batch=group.slice(offset,offset+batchSize),selected=await inferenceSession(Math.max(...batch.map(x=>x.width))),max=selected.width,tensorLength=batch.length*lineHeight*max;if(reuseBuffers&&lengthsScratch.length<batch.length)lengthsScratch=new BigInt64Array(batch.length);const lengths=reuseBuffers?lengthsScratch.subarray(0,batch.length):new BigInt64Array(batch.length),tensor=atlasBatch?prepareAtlas(batch,max):(reuseBuffers?(tensorScratch.length<tensorLength&&(tensorScratch=new Float32Array(tensorLength)),tensorScratch.subarray(0,tensorLength)):new Float32Array(tensorLength));if(!atlasBatch){tensor.fill(0);batch.forEach((item,n)=>{for(let y=0;y<lineHeight;y++)tensor.set(item.data.subarray(y*item.width,(y+1)*item.width),n*lineHeight*max+y*max)})}batch.forEach((item,n)=>{lengths[n]=BigInt(item.width)});
-    const feeds={image:new ort.Tensor('float32',tensor,[batch.length,1,lineHeight,max]),sequence_lengths:new ort.Tensor('int64',lengths,[batch.length])};
-    const out=await selected.runner.run(feeds), logits=out.logits,ids=out.class_ids,output=ids||logits||Object.values(out)[0], outputLengths=out.output_lengths;for(let n=0;n<batch.length;n++)results[batch[n].index]=(ids?decodeIds:decode)(output,n,outputLengths?Number(outputLengths.data[n]):output.dims.at(-1));done+=batch.length;status.textContent=`Recognized ${done} of ${lines.length} lines…`;if(yieldEachBatch)await new Promise(requestAnimationFrame)}
-  if(allowRetry&&retryThreshold&&scale<retryScale){const uncertain=[];results.forEach((result,index)=>{if((result.confidence??Infinity)<retryThreshold)uncertain.push(index)});if(uncertain.length){const replacements=await infer(uncertain.map(index=>lines[index]),retryScale,false);uncertain.forEach((index,n)=>{results[index]={...replacements[n],retried:true}})}}
+  lineRecognizer ||= new LineRecognizer(ort,session,recognizer,labels);
+  const results=await lineRecognizer.recognize(lines,scale,{batchSize,bucketSize,sortedBatches,confidence:collectConfidence});
+  if(allowRetry&&retryThreshold&&scale<retryScale){
+    const uncertain=[];
+    results.forEach((result,index)=>{if((result.confidence??Infinity)<retryThreshold)uncertain.push(index)});
+    if(uncertain.length){
+      const replacements=await infer(uncertain.map(index=>lines[index]),retryScale,false);
+      uncertain.forEach((index,n)=>{results[index]={...replacements[n],retried:true}});
+    }
+  }
   return results;
 }
 
-async function segment(canvas) {
+async function segment(canvas,timing) {
   const started=performance.now(),segmentation=$('segmentation').value;
-  const lines=segmentation==='tesseract'?await tesseractLines(canvas):segmentation==='none'?[canvas]:withoutRunningHeader(lineCanvases(canvas),canvas);
+  const lines=segmentation==='tesseract'?await tesseractLines(canvas,timing):segmentation==='none'?[canvas]:withoutRunningHeader(lineCanvases(canvas),canvas);
   return {lines,seconds:(performance.now()-started)/1000};
 }
 
 async function recognize(canvas, timing, withLayout=false) {
-  await ready;const mode=Number(scaleOverride||$('mode').value);
-  const {lines,seconds}=await segment(canvas);
-  if(timing)timing.layout_seconds=seconds;
+  await ready;const mode=scaleOverride||1;
+  const {lines,seconds}=await segment(canvas,timing);
+  if(timing){timing.layout_seconds=seconds;timing.layout_boxes=lines.map(line=>line.ocrBox||{x:line.x||0,y:line.y||0,width:line.width,height:line.height})}
   const inferenceStarted=performance.now();
   const texts=workerPoolSize&&$('segmentation').value==='tesseract'
-    ?await recognizeInPool(await createImageBitmap(canvas),lines.map(({x,y,width,height})=>({x,y,width,height})),mode,true)
+    ?await recognizeInPool(await createImageBitmap(canvas),lines.map(({x,y,width,height})=>({x,y,width,height})),mode,true,timing)
     :(await infer(lines,mode)).map(item=>item.text);
   if(timing)timing.inference_seconds=(performance.now()-inferenceStarted)/1000;
   const value=cleanModelText(texts.join('\n'));
@@ -339,21 +376,21 @@ async function preparePages(canvases) {
 }
 
 async function recognizePreparedPages(prepared) {
-  const started=performance.now(),results=await infer(prepared.lines,scaleOverride||Number($('mode').value));
+  const started=performance.now(),results=await infer(prepared.lines,scaleOverride||1);
   const confidences=results.map(result=>result.confidence).filter(Number.isFinite).sort((a,b)=>a-b);
   return {inference_seconds:(performance.now()-started)/1000,retried:results.filter(result=>result.retried).length,confidence_median:confidences[Math.floor(confidences.length/2)],pages:prepared.segments.map(({offset,count})=>({line_count:count,text:cleanModelText(results.slice(offset,offset+count).map(item=>item.text).join('\n'))}))};
 }
 
-window.krakenLiteLineCanvases=()=>{const source=sourceCanvas();return withoutRunningHeader(lineCanvases(source),source)};
-window.krakenLiteRecognizeLines=async lines=>cleanModelText((await infer(lines,scaleOverride||Number($('mode').value))).map(item=>item.text).join('\n'));
-window.krakenLiteRecognizePage=async()=>{const started=performance.now(),timing={},value=await recognize(sourceCanvas(),timing);return {seconds:(performance.now()-started)/1000,...timing,text:value}};
-window.krakenLitePreparePages=preparePages;
-window.krakenLiteRecognizePreparedPages=recognizePreparedPages;
-window.krakenLiteSetTuning=value=>{if(value.batch)batchSize=value.batch;if(value.bucket)bucketSize=value.bucket};
-window.krakenLiteRecognizePages=async canvases=>{const started=performance.now(),prepared=await preparePages(canvases),recognized=await recognizePreparedPages(prepared);return {seconds:(performance.now()-started)/1000,layout_seconds:prepared.layout_seconds,...recognized}};
-window.krakenLiteRecognizePagesPooled=async canvases=>{
+window.legalOcrLineCanvases=()=>{const source=sourceCanvas();return withoutRunningHeader(lineCanvases(source),source)};
+window.legalOcrRecognizeLines=async lines=>cleanModelText((await infer(lines,scaleOverride||1)).map(item=>item.text).join('\n'));
+window.legalOcrRecognizePage=async()=>{const started=performance.now(),timing={},value=await recognize(sourceCanvas(),timing);return {seconds:(performance.now()-started)/1000,...timing,text:value}};
+window.legalOcrPreparePages=preparePages;
+window.legalOcrRecognizePreparedPages=recognizePreparedPages;
+window.legalOcrSetTuning=value=>{if(value.batch)batchSize=value.batch;if(value.bucket)bucketSize=value.bucket};
+window.legalOcrRecognizePages=async canvases=>{const started=performance.now(),prepared=await preparePages(canvases),recognized=await recognizePreparedPages(prepared);return {seconds:(performance.now()-started)/1000,layout_seconds:prepared.layout_seconds,...recognized}};
+window.legalOcrRecognizePagesPooled=async canvases=>{
   await ready;await poolReady;if(!workerPoolSize)throw new Error('Set ?pool=N to enable the recognition worker pool');
-  const started=performance.now(),scale=scaleOverride||Number($('mode').value),counts=[];let layoutsDone=0,layout_wall_seconds=0;
+  const started=performance.now(),scale=scaleOverride||1,counts=[];let layoutsDone=0,layout_wall_seconds=0;
   const tasks=canvases.map(async(canvas,index)=>{const {lines}=await segment(canvas);if(++layoutsDone===canvases.length)layout_wall_seconds=(performance.now()-started)/1000;counts[index]=lines.length;const boxes=lines.map(({x,y,width,height})=>({x,y,width,height}));return recognizeInPool(await createImageBitmap(canvas),boxes,scale)});
   const values=await Promise.all(tasks);return {seconds:(performance.now()-started)/1000,layout_wall_seconds,pages:values.map((text,index)=>({line_count:counts[index],text}))};
 };
@@ -386,24 +423,33 @@ $('all').onclick=async()=>{
   setBusy(true);invalidateOcr();
   const target=$('document');target.textContent='';text.textContent='Waiting…';
   const count=pdf?.numPages||1,started=performance.now(),results=new Array(count);
+  const timings=collectTimings?new Array(count):null;
   const entries=[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{
     const pair=document.createElement('article');pair.className='pair';
-    const img=document.createElement('img');img.alt=`Page ${index+2}`;
+    const img=omitPreviews?null:document.createElement('img');
+    if(img)img.alt=`Page ${index+2}`;
+    else pair.style.gridTemplateColumns='1fr';
     const copy=document.createElement('div');copy.className='text';
     const pre=document.createElement('pre');pre.textContent='Waiting…';
-    copy.append(pre);pair.append(img,copy);target.append(pair);return{img,pre};
+    copy.append(pre);if(img)pair.append(img);pair.append(copy);target.append(pair);return{img,pre};
   })];
   let next=1,done=0,failed=0;
   const runner=async()=>{
     while(next<=count){
-      const number=next++,entry=entries[number-1];let canvas;
+      const number=next++,entry=entries[number-1],timing=collectTimings?{}:undefined,pageStarted=performance.now();let canvas;
       try{
         const page=await documentCanvas(number);canvas=page.canvas;
-        if(entry.img)entry.img.src=canvas.toDataURL('image/jpeg',.72);
+        if(timing)timing.render_seconds=(performance.now()-pageStarted)/1000;
+        const previewStarted=performance.now();
+        if(entry.img&&!thumbnailPreviews)entry.img.src=canvas.toDataURL('image/jpeg',.72);
+        if(timing)timing.preview_seconds=(performance.now()-previewStarted)/1000;
+        if(timing)timing.render_preview_seconds=(performance.now()-pageStarted)/1000;
         entry.pre.textContent='Recognizing…';
-        const result=await recognize(canvas,undefined,true);
+        const result=await recognize(canvas,timing,true);
         entry.pre.textContent=result.text;
         results[number-1]={lines:result.lines,transform:page.transform};
+        if(entry.img&&thumbnailPreviews){const started=performance.now();await setThumbnail(entry.img,canvas);if(timing)timing.preview_seconds=(performance.now()-started)/1000}
+        if(timing){timing.page_wall_seconds=(performance.now()-pageStarted)/1000;timings[number-1]=timing}
       }catch(error){failed++;entry.pre.textContent=`OCR failed: ${error.message}`}
       finally{if(canvas)canvas.width=canvas.height=1}
       done++;status.textContent=`Processed ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;
@@ -411,7 +457,8 @@ $('all').onclick=async()=>{
     }
   };
   try{
-    await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize,$('segmentation').value))},runner));
+    await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize*pageBatch,$('segmentation').value))},runner));
+    if(timings){window.legalOcrLastDocumentTimings=timings;window.legalOcrLastDocumentLines=results.map(page=>page?.lines||[])}
     if(failed)status.textContent=poolError?.message||`OCR failed on ${failed} of ${count} pages. Retry recognition before downloading a PDF.`;
     else{ocrPages=results;status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds. Searchable PDF ready to download.`}
   }catch(error){status.textContent=`OCR failed: ${error.message}`}
