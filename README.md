@@ -14,6 +14,7 @@ download a package from [Releases](https://github.com/eliziff/legal-browser-ocr/
 | `legal-browser-ocr-runtime.tar.gz` | Serve the application and its local assets |
 | `legal-browser-ocr.html` | Open the self-contained application, including offline |
 | `legal-ocr-models.tar.gz` | Shared models, tier manifest, checksums and model terms for native readers |
+| `legal-ocr-runtime-windows-x64.zip` | Native PDF/image OCR with automatic CPU/DirectML selection and all five tiers |
 
 Load a PNG or PDF, optionally select a crop, choose a quality tier, then select
 **Recognize document**. Balanced is the default. Quality, Fast and Turbo adjust
@@ -25,6 +26,12 @@ Supported browsers automatically use WebGPU with FP16 when available. Add
 `?backend=cpu` to use CPU inference or `?backend=webgpu` to require GPU inference.
 Measured worker overrides belong to individual benchmark configurations; the
 CPU defaults follow the browser's reported hardware concurrency.
+
+The native package runs without a browser, Node.js or Python. Extract it and run
+`legalocr input.pdf --output recognized.json`; calibration selects a backend and
+worker counts for the installed machine. Its first automatic startup takes
+several seconds. See [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser)
+for native measurements and embedding configuration.
 
 **Download searchable PDF** adds an invisible text layer to the original PDF
 pages. PNG input is embedded on a new PDF page. Crops limit recognition, not
