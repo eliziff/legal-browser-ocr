@@ -8,3 +8,10 @@ export function memoryOptions(query) {
   }
   return options;
 }
+
+export function tensorWidthMultiple(query) {
+  const width = query.has('tensorWidth') ? Number(query.get('tensorWidth')) : 8;
+  if (!Number.isInteger(width) || width < 8 || width > 512 || width % 8)
+    throw new Error('tensorWidth must be a multiple of 8 between 8 and 512');
+  return width;
+}

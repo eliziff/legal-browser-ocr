@@ -110,7 +110,8 @@ export class LineRecognizer {
     }
     if(timing)timing.crop_pack_seconds+=(performance.now()-started)/1000;
     for (const group of groups.values()) for (let offset = 0; offset < group.length; offset += batchSize) {
-      const batch = group.slice(offset, offset + batchSize), width = Math.ceil(Math.max(this.profile.minimum, ...batch.map(line => line.width)) / 8) * 8;
+      const batch = group.slice(offset, offset + batchSize), multiple = this.profile.widthMultiple || 8;
+      const width = Math.ceil(Math.max(this.profile.minimum, ...batch.map(line => line.width)) / multiple) * multiple;
       const { ort } = this;
       started=timing?performance.now():0;
       const feeds={
@@ -124,6 +125,10 @@ export class LineRecognizer {
       try {
       if(timing)timing.model_seconds+=(performance.now()-started)/1000;
       if (timing) {
+        this.inputShapes ||= new Set();
+        const shape = `${batch.length}:${width}`;
+        timing.new_input_shapes = (timing.new_input_shapes || 0) + Number(!this.inputShapes.has(shape));
+        this.inputShapes.add(shape);
         timing.model_batches = (timing.model_batches || 0) + 1;
         timing.recognition_lines = (timing.recognition_lines || 0) + batch.length;
         timing.padded_pixels = (timing.padded_pixels || 0) + batch.length * width * this.profile.height;

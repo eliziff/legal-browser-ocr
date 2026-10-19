@@ -7,8 +7,17 @@ let lineRecognizer;
 let ort=wasm;
 let collectTiming=false;
 async function recognize(pages,scale,timing){
-  const lines=pages.flatMap(page=>page.lines.map(line=>({...line,source:page.bitmap})));
-  return (await lineRecognizer.recognize(lines,scale,{batchSize,bucketSize,sortedBatches,timing})).map(result=>result.text);
+  const sources=[],started=timing?performance.now():0;
+  try{
+    for(const page of pages){
+      const canvas=new OffscreenCanvas(page.bitmap.width,page.bitmap.height);
+      sources.push(canvas);
+      canvas.getContext('2d',{willReadFrequently:true}).drawImage(page.bitmap,0,0);
+    }
+    if(timing)timing.crop_pack_seconds+=(performance.now()-started)/1000;
+    const lines=pages.flatMap((page,index)=>page.lines.map(line=>({...line,source:sources[index]})));
+    return (await lineRecognizer.recognize(lines,scale,{batchSize,bucketSize,sortedBatches,timing})).map(result=>result.text);
+  }finally{for(const canvas of sources)canvas.width=canvas.height=1}
 }
 
 self.onmessage=async({data})=>{
@@ -18,7 +27,7 @@ self.onmessage=async({data})=>{
       ort.env.wasm.wasmPaths={mjs:data.runtimeMjs,wasm:data.runtimeWasm};ort.env.wasm.numThreads=1;
       labels=Object.fromEntries(Object.entries(data.codec).flatMap(([character,ids])=>ids.map(id=>[id,character])));batchSize=data.batchSize;bucketSize=data.bucketSize;sortedBatches=data.sortedBatches;
       session=await ort.InferenceSession.create(data.model,{executionProviders:[data.backend||'wasm'],...data.sessionOptions});
-      lineRecognizer=new LineRecognizer(ort,session,recognizerProfile(data.recognizer),labels);
+      lineRecognizer=new LineRecognizer(ort,session,{...recognizerProfile(data.recognizer),widthMultiple:data.widthMultiple||8},labels);
       collectTiming=data.timing;
       self.postMessage({type:'ready'});return;
     }

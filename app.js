@@ -7,12 +7,12 @@ import { cleanModelText, positionedLines, cropToPdfTransform } from './text-laye
 import { createSearchablePdf } from './pdf-export.js';
 import { LineRecognizer, recognizerProfile } from './recognizer.js';
 import { setThumbnail } from './experiments/ocr-speed/preview.js';
-import { memoryOptions } from './experiments/ocr-speed/session-options.js';
+import { memoryOptions, tensorWidthMultiple } from './experiments/ocr-speed/session-options.js';
 import { ocrModels, ocrTier } from './ocr-tiers.js';
 
 const embedded = globalThis.LEGAL_OCR_ASSETS;
 const experimental = new URLSearchParams(location.search);
-const recognizer = recognizerProfile('indra');
+const recognizer = {...recognizerProfile('indra'),widthMultiple:tensorWidthMultiple(experimental)};
 let tier = ocrTier(experimental.get('tier') || 'balanced');
 const requestedBackend = experimental.get('backend') || 'auto';
 if (!['auto', 'cpu', 'webgpu'].includes(requestedBackend)) throw new Error(`Unknown processing device: ${requestedBackend}`);
@@ -150,7 +150,7 @@ $('mode').onchange = async () => {
   finally { setBusy(false); }
 };
 $('segmentation').onchange=()=>{if(!busy)invalidateOcr()};
-window.legalOcrConfiguration=()=>({backend,tier:$('mode').value,model:tier.model,workerPoolSize,layoutWorkerCount,batchSize,pageBatch,detectorSide:layoutOptions.modelOptions?.longSide});
+window.legalOcrConfiguration=()=>({backend,tier:$('mode').value,model:tier.model,workerPoolSize,layoutWorkerCount,batchSize,pageBatch,bucketSize,widthMultiple:recognizer.widthMultiple,detectorSide:layoutOptions.modelOptions?.longSide});
 
 function ensureMainSession(){
   return sessionPromise||=(ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],...sessionOptions,...(debugRuntime&&{logSeverityLevel:0,logVerbosityLevel:1})}).then(value=>session=value));
@@ -204,7 +204,7 @@ async function initializeRecognitionPool(codec,model){
       for(const task of poolQueue.splice(0)){task.bitmap.close();task.reject(poolError)}
     };
     const runtime=backend==='webgpu'?gpuRuntimePaths:runtimePaths;
-    worker.postMessage({type:'init',backend,runtimeMjs:runtime.mjs,runtimeWasm:runtime.wasm,model:model.slice(0),codec,recognizer:recognizer.id,timing:collectTimings,batchSize,bucketSize,sortedBatches,sessionOptions});
+    worker.postMessage({type:'init',backend,runtimeMjs:runtime.mjs,runtimeWasm:runtime.wasm,model:model.slice(0),codec,recognizer:recognizer.id,widthMultiple:recognizer.widthMultiple,timing:collectTimings,batchSize,bucketSize,sortedBatches,sessionOptions});
   })));
   return slots;
 }

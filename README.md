@@ -46,7 +46,8 @@ on it. Document thumbnails are omitted; the initial input/crop view remains.
 
 ## Recorded performance
 
-Measured on a **Ryzen 5 2600X desktop**, using full Chromium 151 and CPU
+The v0.2.0 comparison below was measured on a **Ryzen 5 2600X desktop**,
+using full Chromium 151 and CPU
 WebAssembly. Every row uses the same **55-page PDF**, rendered by PDF.js at
 144 dpi, and the same human gold transcripts: 145,475 normalized characters.
 Figures are medians of three warm whole-document passes, including rendering,
@@ -81,6 +82,15 @@ segmentation and are not hand-corrected geometry gold.
 The benchmark harness and retained aggregate findings are described in the
 [speed experiment guide](experiments/ocr-speed/README.md). GPU component timings
 are separate from this CPU table.
+
+On an **i3-1315U laptop with Intel UHD Graphics**, the updated Balanced runtime
+measured **3.89 pages/s on CPU** and **5.04 pages/s with automatic WebGPU**, at
+**2.513%** and **2.512% CER**. These use the same 55-page PDF and three warm
+whole-document passes. The original recognition worker measured 1.28 pages/s
+in a separate quiet CPU control. The first GPU document recognition took
+13.67 seconds, with 2.66 seconds of model initialization measured separately;
+input opening and PDF export are excluded. All 55 exported text pages and the
+original first-page pixels passed verification.
 
 ## Develop and package
 
