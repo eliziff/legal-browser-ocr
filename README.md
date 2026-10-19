@@ -28,9 +28,9 @@ Measured worker overrides belong to individual benchmark configurations; the
 CPU defaults follow the browser's reported hardware concurrency.
 
 The native package runs without a browser, Node.js or Python. Extract it and run
-`legalocr input.pdf --output recognized.json`; calibration selects a backend and
-worker counts for the installed machine. Its first automatic startup takes
-several seconds. See [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser)
+`legalocr input.pdf --output recognized.json`; supported GPU providers use CPU
+fallback, with core-based worker limits.
+See [Legal PDF Parser](https://github.com/eliziff/legal-pdf-parser)
 for native measurements and embedding configuration.
 
 **Download searchable PDF** adds an invisible text layer to the original PDF
