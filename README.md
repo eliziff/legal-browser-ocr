@@ -29,6 +29,16 @@ CPU defaults follow the browser's reported hardware concurrency.
 GPU recognition overlaps CPU line detection and crop preparation. PDF parsing
 uses a dedicated worker, with two bounded page batches feeding the recognizer.
 
+Embedding hosts call `createBrowserOcr(assets)` from `browser-runtime.js`, supplying
+asynchronous `assets.bytes(name)` and `assets.url(name)` functions. The returned
+runtime provides `prepare(signal)`, `recognizePage(bitmap, signal)` and `dispose()`;
+recognition consumes the bitmap and returns positioned text lines. Its default
+tier, DPI and asset inventory live in `ocr-tiers.js` and `runtime-assets.js`.
+`worker-policy.js` and `recognition-pool.js` share the browser app's backend choice,
+worker limits, preparation and recognition. Hosts do not maintain OCR profiles.
+Idle embedding workers are released after 30 seconds; a disposed runtime must be
+created again. Cancellation returns promptly while already submitted work settles.
+
 The native package runs without a browser, Node.js or Python. Extract it and run
 `legalocr input.pdf --output recognized.json`; supported GPU providers use CPU
 fallback, with core-based worker limits.

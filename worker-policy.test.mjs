@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {documentWorkers,recognitionWorkers,takeRecognitionBatch} from './worker-policy.js';
+import {documentWorkers,recognitionWorkers,runtimeDefaults,takeRecognitionBatch} from './worker-policy.js';
 
 test('recognition workers follow the browser CPU budget and reserve the UI',()=>{
   assert.deepEqual([1,2,4,8,16].map(recognitionWorkers),[1,1,3,7,15]);
@@ -27,4 +27,19 @@ test('documents use parallel pages only with isolated recognition workers',()=>{
   assert.equal(documentWorkers(4,'tesseract'),4);
   assert.equal(documentWorkers(4,'fast'),1);
   assert.equal(documentWorkers(4,'none'),1);
+});
+
+test('app and embedding defaults share CPU budgets and the pipelined GPU configuration', () => {
+  for (const parallelism of [1, 2, 4, 8, 16]) {
+    const cpu = runtimeDefaults('wasm', parallelism), gpu = runtimeDefaults('webgpu', parallelism);
+    assert.ok(cpu.workerPoolSize >= 1 && cpu.workerPoolSize <= 6);
+    assert.ok(cpu.workerPoolSize < parallelism || parallelism === 1);
+    assert.equal(cpu.pageConcurrency, cpu.workerPoolSize);
+    assert.equal(cpu.prepareWorker, false);
+    assert.equal(gpu.workerPoolSize, 1);
+    assert.equal(gpu.pageBatch, 4);
+    assert.equal(gpu.pageConcurrency, 8);
+    assert.equal(gpu.layoutBackend, 'wasm');
+    assert.equal(gpu.prepareWorker, true);
+  }
 });

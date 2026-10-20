@@ -7,6 +7,26 @@ export function documentWorkers(workerPoolSize,segmentation) {
   return segmentation==='tesseract'?Math.max(1,workerPoolSize):1;
 }
 
+/** Shared production defaults for the browser app and embedding hosts. */
+export function runtimeDefaults(backend, parallelism = globalThis.navigator?.hardwareConcurrency || 2) {
+  const gpu = backend === 'webgpu';
+  const workerPoolSize = gpu ? 1 : Math.min(6, Math.max(1, Math.floor(parallelism / 2)));
+  const pageBatch = gpu ? 4 : 1;
+  return { workerPoolSize, layoutWorkerCount: Math.min(gpu ? 2 : 4, Math.max(1, Math.floor(parallelism / 3))),
+    batchSize: gpu ? 32 : 16, bucketSize: 24, sortedBatches: gpu, pageBatch,
+    prepareWorker: gpu, layoutBackend: 'wasm', widthMultiple: 8,
+    pageConcurrency: documentWorkers(workerPoolSize * pageBatch * (gpu ? 2 : 1), 'tesseract'),
+    sessionOptions: { graphOptimizationLevel: 'all' } };
+}
+
+export async function processingBackend() {
+  try {
+    const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
+    if (adapter && !(adapter.info?.isFallbackAdapter ?? adapter.isFallbackAdapter) && adapter.features.has('shader-f16')) return 'webgpu';
+  } catch { /* CPU inference remains available without a supported GPU. */ }
+  return 'wasm';
+}
+
 export function takeRecognitionBatch(queue,size) {
   if(!queue.length)return [];
   let tasks;

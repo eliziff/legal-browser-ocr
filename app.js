@@ -1,30 +1,25 @@
 import * as ort from 'onnxruntime-web/wasm';
 import { getDocument, GlobalWorkerOptions, PDFWorker } from 'pdfjs-dist/build/pdf.mjs';
-import { TesseractLayout } from './tesseract-layout.js';
-import { orderLayoutLines } from './layout-order.js';
-import { documentWorkers, takeRecognitionBatch } from './worker-policy.js';
+import { createLayoutPool, createRecognitionPool } from './recognition-pool.js';
+import { lineRegions } from './layout-order.js';
+import { documentWorkers, runtimeDefaults, processingBackend } from './worker-policy.js';
 import { cleanModelText, positionedLines, cropToPdfTransform } from './text-layer.js';
 import { createSearchablePdf } from './pdf-export.js';
 import { LineRecognizer, recognizerProfile } from './recognizer.js';
 import { setThumbnail } from './experiments/ocr-speed/preview.js';
 import { memoryOptions, tensorWidthMultiple } from './experiments/ocr-speed/session-options.js';
-import { ocrModels, ocrTier } from './ocr-tiers.js';
+import { ocrModels, ocrTier, DEFAULT_TIER, OCR_DPI } from './ocr-tiers.js';
 
 const embedded = globalThis.LEGAL_OCR_ASSETS;
 const experimental = new URLSearchParams(location.search);
 const recognizer = {...recognizerProfile('indra'),widthMultiple:tensorWidthMultiple(experimental)};
-let tier = ocrTier(experimental.get('tier') || 'balanced');
+let tier = ocrTier(experimental.get('tier') || DEFAULT_TIER);
 const requestedBackend = experimental.get('backend') || 'auto';
 if (!['auto', 'cpu', 'webgpu'].includes(requestedBackend)) throw new Error(`Unknown processing device: ${requestedBackend}`);
-let backend = 'wasm';
-if (requestedBackend !== 'cpu') {
-  try {
-    const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
-    if (adapter && !(adapter.info?.isFallbackAdapter??adapter.isFallbackAdapter) && adapter.features.has('shader-f16')) backend = 'webgpu';
-    else if (requestedBackend === 'webgpu') throw new Error('A WebGPU device with shader-f16 is required.');
-  } catch (error) { if (requestedBackend === 'webgpu') throw error; }
-}
+const backend = requestedBackend === 'cpu' ? 'wasm' : await processingBackend();
+if (requestedBackend === 'webgpu' && backend !== 'webgpu') throw new Error('A WebGPU device with shader-f16 is required.');
 const collectTimings = experimental.get('timing') === '1';
+const defaults = runtimeDefaults(backend);
 const gpuArgMax = backend === 'webgpu' ? Number(experimental.get('gpuArgMax')||0) : 0;
 if(![0,64,128,256].includes(gpuArgMax))throw Error('GPU ArgMax must be 64, 128 or 256');
 const previewMode = experimental.get('preview') || 'none';
@@ -35,29 +30,29 @@ const detector = experimental.get('detector') === 'tesseract' ? null : experimen
 if (detector && !['indra', 'paddle'].includes(detector)) throw new Error(`Unknown detector: ${detector}`);
 const detectorLimit=experimental.get('detectorLimit');
 if(detectorLimit&&!['min','max'].includes(detectorLimit))throw new Error(`Unknown detector resize limit: ${detectorLimit}`);
-const workerPoolSize = experimental.has('pool') ? Number(experimental.get('pool')) : backend === 'webgpu' ? 1 : Math.min(6, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 2)));
+const workerPoolSize = experimental.has('pool') ? Number(experimental.get('pool')) : defaults.workerPoolSize;
 const fullRuntime = experimental.get('runtime') === 'full';
 const runtimeStem = experimental.get('runtime') === 'relaxed' ? 'ort-wasm-relaxedsimd' : 'ort-wasm-simd';
 const debugRuntime = experimental.get('debug') === '1';
 const requestedThreads = Number(experimental.get('threads')) || (workerPoolSize?1:4);
 const threadCount = crossOriginIsolated ? Math.min(requestedThreads, navigator.hardwareConcurrency || 4) : 1;
 const runtimeSuffix = '-threaded';
-let batchSize = Number(experimental.get('batch')) || (backend === 'webgpu' ? 32 : recognizer.batchSize);
-let bucketSize = Number(experimental.get('bucket')) || 24;
-const sortedBatches = experimental.has('sort') ? experimental.get('sort') === '1' : backend === 'webgpu';
-const pageBatch = Number(experimental.get('pageBatch') || (backend === 'webgpu' ? 4 : 1));
+let batchSize = Number(experimental.get('batch')) || defaults.batchSize;
+let bucketSize = Number(experimental.get('bucket')) || defaults.bucketSize;
+const sortedBatches = experimental.has('sort') ? experimental.get('sort') === '1' : defaults.sortedBatches;
+const pageBatch = Number(experimental.get('pageBatch') || defaults.pageBatch);
 const fixedBatches=experimental.get('fixedBatch')!=='0';
-const prepareWorker=backend==='webgpu'&&experimental.get('prepareWorker')!=='0';
+const prepareWorker=defaults.prepareWorker&&experimental.get('prepareWorker')!=='0';
 if (!Number.isInteger(pageBatch) || pageBatch < 1 || pageBatch > 4) throw new Error('pageBatch must be between 1 and 4');
 const scaleOverride = Number(experimental.get('scale')) || 0;
 const modelPath = experimental.get('model');
-const graphOptimizationLevel = experimental.get('opt') || 'all';
+const graphOptimizationLevel = experimental.get('opt') || defaults.sessionOptions.graphOptimizationLevel;
 const sessionOptions = {graphOptimizationLevel,...memoryOptions(experimental),...(debugRuntime&&{logSeverityLevel:0,logVerbosityLevel:1})};
-const layoutBackend = experimental.get('layoutBackend') || 'cpu';
+const layoutBackend = experimental.get('layoutBackend') || (defaults.layoutBackend === 'wasm' ? 'cpu' : defaults.layoutBackend);
 if (!['cpu', 'webgpu'].includes(layoutBackend)) throw new Error(`Unknown detection device: ${layoutBackend}`);
 const layoutExecutionProvider = layoutBackend === 'cpu' ? 'wasm' : layoutBackend;
 const atlasBatch = experimental.get('atlas') !== '0';
-const layoutWorkerCount = Math.max(1, Number(experimental.get('layoutWorkers')) || Math.min(backend === 'webgpu' ? 2 : 4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 3))));
+const layoutWorkerCount = Math.max(1, Number(experimental.get('layoutWorkers')) || defaults.layoutWorkerCount);
 const layoutScale = Number(experimental.get('layoutScale'))||1;
 const trimLayout = experimental.get('layoutTrim')==='1';
 const layoutPsm = Number(experimental.get('layoutPsm'))||3;
@@ -95,11 +90,8 @@ let session, modelBytes, labels, pdf, imageBitmap, crop, cropTemplate, dragStart
 let pdfWorker,pdfWorkerPort;
 let sessionPromise;
 let lineRecognizer;
-let loadedFile = null, ocrPages = null, busy = false, poolError = null, modelReady = false;
-let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[];
-let recognitionSlots=[];
-let preparation;
-let poolFlush;
+let loadedFile = null, ocrPages = null, busy = false, modelReady = false;
+let poolReady = Promise.resolve(), recognitionPool;
 const hasTesseractLayout = !embedded || Boolean(embedded.layoutCore);
 const layoutOptions={workerPath:assetUrl('layoutWorker','./tesseract-layout-worker.js'),corePath:assetUrl('layoutCore','./assets/layout-core.mjs'),wasmPath:assetUrl('layoutWasm','./assets/layout-core.wasm','application/wasm'),sourceResolution:Math.round(200*layoutScale),trim:trimLayout,psm:layoutPsm,binaryThreshold:layoutBinaryThreshold};
 if(detector){
@@ -108,9 +100,7 @@ if(detector){
   layoutOptions.modelOptions={backend:detector,executionProvider:layoutExecutionProvider,modelPath:assetUrl(`${detector}Detector`,`./assets/detectors/${detector}/model.onnx`,'application/octet-stream'),configPath:assetUrl('detectorConfig','./assets/detectors/config.json','application/json'),runtimeMjs:layoutRuntime.mjs,runtimeWasm:layoutRuntime.wasm,longSide:Number(experimental.get('detectorSide'))||tier.detectorSide,limitType:detectorLimit||undefined,sessionOptions};
   $('segmentation').querySelector('[value="tesseract"]').textContent=detector==='indra'?'Indra line detection':'Paddle line detection';
 }
-const layouts=hasTesseractLayout?Array.from({length:layoutWorkerCount},()=>new TesseractLayout(layoutOptions)):[];
-let idleLayouts=[],layoutQueue=[];
-idleLayouts.push(...layouts);
+const layoutPool = createLayoutPool(layoutOptions, hasTesseractLayout ? layoutWorkerCount : 0);
 const layoutReady = Promise.resolve();
 if (!hasTesseractLayout) {
   $('segmentation').querySelector('[value="tesseract"]').remove();
@@ -119,10 +109,7 @@ if (!hasTesseractLayout) {
 
 async function loadRecognizer() {
   modelReady=false;
-  for (const slot of recognitionSlots) slot.worker.terminate();
-  preparation?.worker.terminate();
-  preparation=undefined;
-  recognitionSlots=[];idleWorkers=[];poolError=null;
+  recognitionPool?.dispose();
   if (session) await session.release();
   session=sessionPromise=lineRecognizer=undefined;
   const pack = ocrModels[tier.model];
@@ -135,7 +122,14 @@ async function loadRecognizer() {
   labels = Object.fromEntries(Object.entries(codec).flatMap(([character, ids]) => ids.map(id => [id, character])));
   if(workerPoolSize) {
     const workerModel = backend === 'webgpu' ? await assetBytes(pack.gpu, './'+pack.gpu) : model;
-    poolReady=Promise.all([initializeRecognitionPool(codec,workerModel),prepareWorker?initializePreparationWorker():undefined]);
+    recognitionPool = createRecognitionPool({
+      workerUrl: assetUrl('recognitionWorker', './dist/recognition-worker.js'),
+      preparationUrl: prepareWorker ? assetUrl('preparationWorker', './dist/preparation-worker.js') : undefined,
+      runtime: backend === 'webgpu' ? gpuRuntimePaths : runtimePaths, model: new Uint8Array(workerModel), codec,
+      options: { backend, workerPoolSize, pageBatch, batchSize, bucketSize, sortedBatches, sessionOptions,
+        recognizer: recognizer.id, widthMultiple: recognizer.widthMultiple, gpuArgMax, collectTimings },
+    });
+    poolReady = recognitionPool.ready;
   }
   else await ensureMainSession();
   await poolReady;
@@ -147,7 +141,7 @@ let ready = loadRecognizer();
 ready.catch(error => { status.textContent = `Model failed to load: ${error.message}`; });
 $('mode').disabled=true;
 ready.then(()=>setBusy(busy),()=>setBusy(busy));
-$('mode').value = experimental.get('tier') || 'balanced';
+$('mode').value = experimental.get('tier') || DEFAULT_TIER;
 $('mode').onchange = async () => {
   if (busy) return;
   invalidateOcr();setBusy(true);
@@ -168,110 +162,9 @@ function ensureMainSession(){
   return sessionPromise||=(ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],...sessionOptions,...(debugRuntime&&{logSeverityLevel:0,logVerbosityLevel:1})}).then(value=>session=value));
 }
 
-function pumpRecognitionPool(){
-  if(poolFlush&&poolQueue.length<pageBatch&&!poolQueue[0]?.batch)return;
-  while(idleWorkers.length&&poolQueue.length){
-    const tasks=takeRecognitionBatch(poolQueue,pageBatch);
-    if(!tasks.length)return;
-    const slot=idleWorkers.pop();
-    slot.tasks=tasks;
-    const pages=tasks.map(task=>({bitmap:task.bitmap,prepared:task.prepared,lines:task.lines}));
-    const transfers=tasks.flatMap(task=>task.prepared?task.prepared.map(line=>line.gray.buffer):[task.bitmap]);
-    slot.worker.postMessage({type:'recognize',scale:tasks[0].scale,pages},transfers);
-  }
-}
-
-function pumpLayoutPool(){
-  while(idleLayouts.length&&layoutQueue.length){const worker=idleLayouts.pop(),task=layoutQueue.shift();worker.findLines(task.canvas,task.timing).then(task.resolve,task.reject).finally(()=>{idleLayouts.push(worker);pumpLayoutPool()})}
-}
-
-async function findLayoutLines(canvas,timing){
-  await layoutReady;return new Promise((resolve,reject)=>{layoutQueue.push({canvas,timing,resolve,reject});pumpLayoutPool()});
-}
-
-async function initializeRecognitionPool(codec,model){
-  const workerUrl=assetUrl('recognitionWorker','./dist/recognition-worker.js');
-  const slots=await Promise.all(Array.from({length:workerPoolSize},()=>new Promise((resolve,reject)=>{
-    const worker=new Worker(workerUrl),slot={worker,tasks:null};recognitionSlots.push(slot);
-    worker.onmessage=({data})=>{
-      if(data.type==='ready'){idleWorkers.push(slot);resolve(slot);pumpRecognitionPool();return}
-      const tasks=slot.tasks;slot.tasks=null;
-      if(data.type==='error'){
-        if(!tasks){reject(new Error(data.message));return}
-        for(const task of tasks)task.reject(new Error(data.message));
-      }else if(tasks){
-        const count=tasks.reduce((sum,task)=>sum+task.lines.length,0);
-        tasks.forEach((task,index)=>{
-          if(task.timing&&data.timing){
-            // Shared batch work is attributed by line count, not individual page latency.
-            const fraction=count?task.lines.length/count:1/tasks.length;
-            for(const [key,value]of Object.entries(data.timing))task.timing[key]=(task.timing[key]||0)+value*fraction;
-            task.timing.recognition_batch_pages=tasks.length;
-          }
-          task.resolve(task.includeLines?data.pages[index].lines:data.pages[index].text);
-        });
-      }
-      idleWorkers.push(slot);pumpRecognitionPool();
-    };
-    worker.onerror=event=>{
-      poolError=new Error(`${event.message||'Recognition worker failed'}. Reload this app to retry.`);
-      reject(poolError);for(const task of slot.tasks||[])task.reject(poolError);slot.tasks=null;
-      idleWorkers=idleWorkers.filter(value=>value!==slot);
-      for(const task of poolQueue.splice(0)){task.bitmap?.close();task.reject(poolError)}
-    };
-    const runtime=backend==='webgpu'?gpuRuntimePaths:runtimePaths;
-    worker.postMessage({type:'init',backend,runtimeMjs:runtime.mjs,runtimeWasm:runtime.wasm,model:model.slice(0),codec,recognizer:recognizer.id,widthMultiple:recognizer.widthMultiple,gpuArgMax,timing:collectTimings,batchSize,bucketSize,sortedBatches,sessionOptions});
-  })));
-  return slots;
-}
-
-function initializePreparationWorker(){
-  const worker=new Worker(assetUrl('preparationWorker','./dist/preparation-worker.js'));
-  const slot=preparation={worker,pending:new Map(),nextId:0};
-  return new Promise((resolve,reject)=>{
-    worker.onmessage=({data})=>{
-      if(data.type==='ready'){resolve();return}
-      const task=slot.pending.get(data.id);slot.pending.delete(data.id);
-      if(!task)return;
-      if(data.error)task.reject(new Error(data.error));
-      else{
-        if(task.timing&&data.timing)Object.assign(task.timing,data.timing);
-        task.resolve(data.prepared);
-      }
-    };
-    worker.onerror=event=>{
-      poolError=new Error(`${event.message||'Crop preparation worker failed'}. Reload this app to retry.`);
-      reject(poolError);
-      for(const task of slot.pending.values())task.reject(poolError);
-      slot.pending.clear();
-      for(const task of poolQueue.splice(0)){task.bitmap?.close();task.reject(poolError)}
-    };
-    worker.postMessage({type:'init',timing:collectTimings});
-  });
-}
-
-async function recognizeInPool(bitmap,lines,scale,includeLines=false,timing,batch){
-  let prepared;
-  try{
-    await poolReady;if(poolError)throw poolError;
-    if(preparation){
-      const slot=preparation,id=++slot.nextId;
-      const source=bitmap;bitmap=undefined;
-      prepared=await new Promise((resolve,reject)=>{
-        slot.pending.set(id,{resolve,reject,timing});
-        try{slot.worker.postMessage({id,bitmap:source,lines,scale},[source])}
-        catch(error){slot.pending.delete(id);source.close();reject(error)}
-      });
-      if(poolError)throw poolError;
-    }
-  }catch(error){bitmap?.close();throw error}
-  return new Promise((resolve,reject)=>{
-    if(batch)batch.queued=true;
-    poolQueue.push({bitmap,prepared,lines,scale,includeLines,timing,batch,resolve,reject});
-    if(pageBatch>1&&!batch&&!poolFlush)poolFlush=setTimeout(()=>{poolFlush=null;pumpRecognitionPool()},8);
-    pumpRecognitionPool();
-  });
-}
+const findLayoutLines = (canvas, timing) => layoutPool.findLines(canvas, timing);
+const recognizeInPool = (bitmap, lines, scale, includeLines = false, timing, batch) =>
+  recognitionPool.recognize({ bitmap, lines, scale, includeLines, timing, batch });
 
 function setBusy(value) {
   busy=value;
@@ -289,7 +182,7 @@ function setCanvasSize(width, height) {
 
 async function renderPage(number) {
   if (pdf) {
-    const page = await pdf.getPage(number), viewport = page.getViewport({ scale: 2 });
+    const page = await pdf.getPage(number), viewport = page.getViewport({ scale: OCR_DPI / 72 });
     setCanvasSize(Math.round(viewport.width), Math.round(viewport.height));
     await page.render({ canvasContext: context, viewport }).promise;
   } else if (imageBitmap) {
@@ -384,15 +277,12 @@ async function tesseractLines(source,timing) {
   if(layoutScale!==1){layoutSource=document.createElement('canvas');layoutSource.width=Math.max(1,Math.round(source.width*layoutScale));layoutSource.height=Math.max(1,Math.round(source.height*layoutScale));layoutSource.getContext('2d').drawImage(source,0,0,layoutSource.width,layoutSource.height)}
   let boxes=await findLayoutLines(layoutSource,timing);
   if(layoutScale!==1)boxes=boxes.map(box=>({x0:box.x0*source.width/layoutSource.width,y0:box.y0*source.height/layoutSource.height,x1:box.x1*source.width/layoutSource.width,y1:box.y1*source.height/layoutSource.height}));
-  boxes = orderLayoutLines(boxes, source.width, source.height);
-  if(atlasBatch)return boxes.map(box=>({source,ocrBox:{x:box.x0,y:box.y0,width:box.x1-box.x0,height:box.y1-box.y0},x:Math.max(0,box.x0-10),y:Math.max(0,box.y0-6),width:Math.max(1,Math.min(source.width,box.x1+11)-Math.max(0,box.x0-10)),height:Math.max(1,Math.min(source.height,box.y1+7)-Math.max(0,box.y0-6))}));
-  return boxes.map(box => {
-    const x = Math.max(0, box.x0 - 10), y = Math.max(0, box.y0 - 6);
+  const regions = lineRegions(boxes, source.width, source.height);
+  if (atlasBatch) return regions.map(region => ({ source, ...region }));
+  return regions.map(region => {
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.min(source.width, box.x1 + 11) - x);
-    canvas.height = Math.max(1, Math.min(source.height, box.y1 + 7) - y);
-    canvas.x=x;canvas.y=y;canvas.ocrBox={x:box.x0,y:box.y0,width:box.x1-box.x0,height:box.y1-box.y0};
-    canvas.getContext('2d').drawImage(source, x, y, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    Object.assign(canvas, region);
+    canvas.getContext('2d').drawImage(source, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
     return canvas;
   });
 }
@@ -468,7 +358,7 @@ async function documentCanvas(number){
   const canvas=document.createElement('canvas');
   let transform=[1,0,0,-1,0,pageCanvas.height]; // PNG: one source pixel per PDF point.
   if(pdf){
-    const page=await pdf.getPage(number),viewport=page.getViewport({scale:2});
+    const page=await pdf.getPage(number),viewport=page.getViewport({scale:OCR_DPI/72});
     transform=viewport.transform;canvas.width=Math.round(viewport.width);canvas.height=Math.round(viewport.height);
     if(number===1)canvas.getContext('2d').drawImage(pageCanvas,0,0);
     else await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
@@ -516,7 +406,7 @@ $('all').onclick=async()=>{
         if(entry.img&&thumbnailPreviews){const started=performance.now();await setThumbnail(entry.img,canvas);if(timing)timing.preview_seconds=(performance.now()-started)/1000}
         if(timing){timing.page_wall_seconds=(performance.now()-pageStarted)/1000;timings[number-1]=timing}
       }catch(error){
-        if(batch&&!batch.queued){batch.group.expected--;pumpRecognitionPool();}
+        if(batch&&!batch.queued){batch.group.expected--;recognitionPool.pump();}
         failed++;entry.pre.textContent=`OCR failed: ${error.message}`;
       }
       finally{if(canvas)canvas.width=canvas.height=1}
@@ -527,7 +417,7 @@ $('all').onclick=async()=>{
   try{
     await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize*pageBatch*(fixed?2:1),$('segmentation').value))},runner));
     if(timings){window.legalOcrLastDocumentTimings=timings;window.legalOcrLastDocumentLines=results.map(page=>page?.lines||[])}
-    if(failed)status.textContent=poolError?.message||`OCR failed on ${failed} of ${count} pages. Retry recognition before downloading a PDF.`;
+    if(failed)status.textContent=recognitionPool?.error?.message||`OCR failed on ${failed} of ${count} pages. Retry recognition before downloading a PDF.`;
     else{ocrPages=results;status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds. Searchable PDF ready to download.`}
   }catch(error){status.textContent=`OCR failed: ${error.message}`}
   finally{setBusy(false)}

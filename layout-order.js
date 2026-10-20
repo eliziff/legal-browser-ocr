@@ -3,6 +3,16 @@ const median = values => {
   return sorted[Math.floor(sorted.length / 2)] || 0;
 };
 
+/** Ordered recognition crops retain the detector's original bounds for returned text geometry. */
+export function lineRegions(boxes, width, height) {
+  return orderLayoutLines(boxes, width, height).map(box => {
+    const x = Math.max(0, box.x0 - 10), y = Math.max(0, box.y0 - 6);
+    return { x, y, width: Math.max(1, Math.min(width, box.x1 + 11) - x),
+      height: Math.max(1, Math.min(height, box.y1 + 7) - y),
+      ocrBox: { x: box.x0, y: box.y0, width: box.x1 - box.x0, height: box.y1 - box.y0 } };
+  });
+}
+
 function footerStart(lines, pageHeight) {
   const sorted = lines.slice().sort((a, b) => a.y0 - b.y0);
   if (sorted.length < 8) return null;

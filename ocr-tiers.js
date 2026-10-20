@@ -1,3 +1,5 @@
+export const DEFAULT_TIER = 'balanced';
+export const OCR_DPI = 144;
 export const ocrTiers = Object.freeze({
   quality: { label: 'Quality', model: 'standard', detectorSide: 1024 },
   balanced: { label: 'Balanced', model: 'standard', detectorSide: 896 },
@@ -11,7 +13,7 @@ export const ocrModels = Object.freeze({
   light: { cpu: 'assets/indra-followup/student10c64ids/model.onnx', gpu: 'assets/indra-followup/gpu64h/model.onnx', codec: 'assets/indra-followup/student10c64ids/codec.json' },
 });
 
-export function ocrTier(id = 'balanced') {
+export function ocrTier(id = DEFAULT_TIER) {
   if (!Object.hasOwn(ocrTiers, id)) throw new Error(`Unknown OCR tier: ${id}`);
   return ocrTiers[id];
 }
