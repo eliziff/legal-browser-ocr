@@ -26,6 +26,8 @@ Supported browsers automatically use WebGPU with FP16 when available. Add
 `?backend=cpu` to use CPU inference or `?backend=webgpu` to require GPU inference.
 Measured worker overrides belong to individual benchmark configurations; the
 CPU defaults follow the browser's reported hardware concurrency.
+GPU recognition overlaps CPU line detection and crop preparation. PDF parsing
+uses a dedicated worker, with two bounded page batches feeding the recognizer.
 
 The native package runs without a browser, Node.js or Python. Extract it and run
 `legalocr input.pdf --output recognized.json`; supported GPU providers use CPU
@@ -83,14 +85,26 @@ The benchmark harness and retained aggregate findings are described in the
 [speed experiment guide](experiments/ocr-speed/README.md). GPU component timings
 are separate from this CPU table.
 
-On an **i3-1315U laptop with Intel UHD Graphics**, the updated Balanced runtime
-measured **3.89 pages/s on CPU** and **5.04 pages/s with automatic WebGPU**, at
-**2.513%** and **2.512% CER**. These use the same 55-page PDF and three warm
-whole-document passes. The original recognition worker measured 1.28 pages/s
-in a separate quiet CPU control. The first GPU document recognition took
-13.67 seconds, with 2.66 seconds of model initialization measured separately;
-input opening and PDF export are excluded. All 55 exported text pages and the
-original first-page pixels passed verification.
+The **v0.2.3 browser runtime** uses the same models and full recognition width.
+Its pipeline overlaps PDF rendering, CPU detection/preparation and GPU inference.
+The same 55-page benchmark, with three warm passes, measured:
+
+| Balanced browser runtime | CPU pages/s | CPU CER | WebGPU pages/s | WebGPU CER |
+| --- | ---: | ---: | ---: | ---: |
+| i3-1315U laptop / Intel UHD, Chromium 149 | 4.55 | 2.513% | **6.05** | 2.512% |
+| Ryzen 5 2600X / RTX 3080 Ti, Chromium 151 | 7.72 | 2.601% | **12.73** | 2.606% |
+
+Frozen v0.2.2 GPU controls measured 5.46 and 8.56 pages/s respectively: the new
+runtime is about **11% faster on the laptop** and **49% faster on the desktop**,
+with identical recognized text on each machine. CPU and GPU detection can differ
+slightly in line coordinates. Desktop Quality WebGPU measured **9.52 pages/s /
+2.252% CER**. These are Chromium results, not guarantees for other browsers or
+documents.
+
+The first 55-page GPU document took **11.34 seconds on the laptop** and **6.66
+seconds on the desktop**; model initialization took another 2.71 and 3.25 seconds.
+Input opening and PDF export are excluded. All 55 exported text pages, unchanged
+original first-page pixels and reopening the input passed verification.
 
 ## Develop and package
 

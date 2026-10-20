@@ -1,8 +1,8 @@
 import * as ort from 'onnxruntime-web/wasm';
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/build/pdf.mjs';
+import { getDocument, GlobalWorkerOptions, PDFWorker } from 'pdfjs-dist/build/pdf.mjs';
 import { TesseractLayout } from './tesseract-layout.js';
 import { orderLayoutLines } from './layout-order.js';
-import { documentWorkers } from './worker-policy.js';
+import { documentWorkers, takeRecognitionBatch } from './worker-policy.js';
 import { cleanModelText, positionedLines, cropToPdfTransform } from './text-layer.js';
 import { createSearchablePdf } from './pdf-export.js';
 import { LineRecognizer, recognizerProfile } from './recognizer.js';
@@ -20,14 +20,17 @@ let backend = 'wasm';
 if (requestedBackend !== 'cpu') {
   try {
     const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
-    if (adapter && !adapter.isFallbackAdapter && adapter.features.has('shader-f16')) backend = 'webgpu';
+    if (adapter && !(adapter.info?.isFallbackAdapter??adapter.isFallbackAdapter) && adapter.features.has('shader-f16')) backend = 'webgpu';
     else if (requestedBackend === 'webgpu') throw new Error('A WebGPU device with shader-f16 is required.');
   } catch (error) { if (requestedBackend === 'webgpu') throw error; }
 }
 const collectTimings = experimental.get('timing') === '1';
+const gpuArgMax = backend === 'webgpu' ? Number(experimental.get('gpuArgMax')||0) : 0;
+if(![0,64,128,256].includes(gpuArgMax))throw Error('GPU ArgMax must be 64, 128 or 256');
 const previewMode = experimental.get('preview') || 'none';
 const thumbnailPreviews = previewMode === 'thumbnail';
 const omitPreviews = previewMode === 'none';
+const explicitPdfPort=experimental.get('pdfPort')!=='0';
 const detector = experimental.get('detector') === 'tesseract' ? null : experimental.get('detector') || 'indra';
 if (detector && !['indra', 'paddle'].includes(detector)) throw new Error(`Unknown detector: ${detector}`);
 const detectorLimit=experimental.get('detectorLimit');
@@ -43,13 +46,18 @@ let batchSize = Number(experimental.get('batch')) || (backend === 'webgpu' ? 32 
 let bucketSize = Number(experimental.get('bucket')) || 24;
 const sortedBatches = experimental.has('sort') ? experimental.get('sort') === '1' : backend === 'webgpu';
 const pageBatch = Number(experimental.get('pageBatch') || (backend === 'webgpu' ? 4 : 1));
+const fixedBatches=experimental.get('fixedBatch')!=='0';
+const prepareWorker=backend==='webgpu'&&experimental.get('prepareWorker')!=='0';
 if (!Number.isInteger(pageBatch) || pageBatch < 1 || pageBatch > 4) throw new Error('pageBatch must be between 1 and 4');
 const scaleOverride = Number(experimental.get('scale')) || 0;
 const modelPath = experimental.get('model');
 const graphOptimizationLevel = experimental.get('opt') || 'all';
-const sessionOptions = {graphOptimizationLevel,...memoryOptions(experimental)};
+const sessionOptions = {graphOptimizationLevel,...memoryOptions(experimental),...(debugRuntime&&{logSeverityLevel:0,logVerbosityLevel:1})};
+const layoutBackend = experimental.get('layoutBackend') || 'cpu';
+if (!['cpu', 'webgpu'].includes(layoutBackend)) throw new Error(`Unknown detection device: ${layoutBackend}`);
+const layoutExecutionProvider = layoutBackend === 'cpu' ? 'wasm' : layoutBackend;
 const atlasBatch = experimental.get('atlas') !== '0';
-const layoutWorkerCount = Math.max(1, Number(experimental.get('layoutWorkers')) || (backend === 'webgpu' ? 1 : Math.min(4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 3)))));
+const layoutWorkerCount = Math.max(1, Number(experimental.get('layoutWorkers')) || Math.min(backend === 'webgpu' ? 2 : 4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 3))));
 const layoutScale = Number(experimental.get('layoutScale'))||1;
 const trimLayout = experimental.get('layoutTrim')==='1';
 const layoutPsm = Number(experimental.get('layoutPsm'))||3;
@@ -84,18 +92,20 @@ $('terms').href=assetUrl('packageNotice', './assets/manifest.json', 'application
 if (experimental.has('seg')) $('segmentation').value = experimental.get('seg');
 const context = pageCanvas.getContext('2d'), overlayContext = overlay.getContext('2d');
 let session, modelBytes, labels, pdf, imageBitmap, crop, cropTemplate, dragStart;
+let pdfWorker,pdfWorkerPort;
 let sessionPromise;
 let lineRecognizer;
 let loadedFile = null, ocrPages = null, busy = false, poolError = null, modelReady = false;
 let poolReady=Promise.resolve(),poolQueue=[],idleWorkers=[];
 let recognitionSlots=[];
+let preparation;
 let poolFlush;
 const hasTesseractLayout = !embedded || Boolean(embedded.layoutCore);
 const layoutOptions={workerPath:assetUrl('layoutWorker','./tesseract-layout-worker.js'),corePath:assetUrl('layoutCore','./assets/layout-core.mjs'),wasmPath:assetUrl('layoutWasm','./assets/layout-core.wasm','application/wasm'),sourceResolution:Math.round(200*layoutScale),trim:trimLayout,psm:layoutPsm,binaryThreshold:layoutBinaryThreshold};
 if(detector){
   layoutOptions.workerPath=assetUrl('detectorWorker','./dist/detector-worker.js');
-  const layoutRuntime = backend === 'webgpu' ? gpuRuntimePaths : runtimePaths;
-  layoutOptions.modelOptions={backend:detector,executionProvider:backend,modelPath:assetUrl(`${detector}Detector`,`./assets/detectors/${detector}/model.onnx`,'application/octet-stream'),configPath:assetUrl('detectorConfig','./assets/detectors/config.json','application/json'),runtimeMjs:layoutRuntime.mjs,runtimeWasm:layoutRuntime.wasm,longSide:Number(experimental.get('detectorSide'))||tier.detectorSide,limitType:detectorLimit||undefined,sessionOptions};
+  const layoutRuntime = layoutExecutionProvider === 'webgpu' ? gpuRuntimePaths : runtimePaths;
+  layoutOptions.modelOptions={backend:detector,executionProvider:layoutExecutionProvider,modelPath:assetUrl(`${detector}Detector`,`./assets/detectors/${detector}/model.onnx`,'application/octet-stream'),configPath:assetUrl('detectorConfig','./assets/detectors/config.json','application/json'),runtimeMjs:layoutRuntime.mjs,runtimeWasm:layoutRuntime.wasm,longSide:Number(experimental.get('detectorSide'))||tier.detectorSide,limitType:detectorLimit||undefined,sessionOptions};
   $('segmentation').querySelector('[value="tesseract"]').textContent=detector==='indra'?'Indra line detection':'Paddle line detection';
 }
 const layouts=hasTesseractLayout?Array.from({length:layoutWorkerCount},()=>new TesseractLayout(layoutOptions)):[];
@@ -110,6 +120,8 @@ if (!hasTesseractLayout) {
 async function loadRecognizer() {
   modelReady=false;
   for (const slot of recognitionSlots) slot.worker.terminate();
+  preparation?.worker.terminate();
+  preparation=undefined;
   recognitionSlots=[];idleWorkers=[];poolError=null;
   if (session) await session.release();
   session=sessionPromise=lineRecognizer=undefined;
@@ -123,7 +135,7 @@ async function loadRecognizer() {
   labels = Object.fromEntries(Object.entries(codec).flatMap(([character, ids]) => ids.map(id => [id, character])));
   if(workerPoolSize) {
     const workerModel = backend === 'webgpu' ? await assetBytes(pack.gpu, './'+pack.gpu) : model;
-    poolReady=initializeRecognitionPool(codec,workerModel);
+    poolReady=Promise.all([initializeRecognitionPool(codec,workerModel),prepareWorker?initializePreparationWorker():undefined]);
   }
   else await ensureMainSession();
   await poolReady;
@@ -150,19 +162,22 @@ $('mode').onchange = async () => {
   finally { setBusy(false); }
 };
 $('segmentation').onchange=()=>{if(!busy)invalidateOcr()};
-window.legalOcrConfiguration=()=>({backend,tier:$('mode').value,model:tier.model,workerPoolSize,layoutWorkerCount,batchSize,pageBatch,bucketSize,widthMultiple:recognizer.widthMultiple,detectorSide:layoutOptions.modelOptions?.longSide});
+window.legalOcrConfiguration=()=>({backend,layoutBackend:layoutExecutionProvider,tier:$('mode').value,model:tier.model,workerPoolSize,layoutWorkerCount,batchSize,pageBatch,fixedBatches,prepareWorker,bucketSize,widthMultiple:recognizer.widthMultiple,gpuArgMax,explicitPdfPort,pdfWorkerActive:pdfWorker?.port instanceof Worker,detectorSide:layoutOptions.modelOptions?.longSide});
 
 function ensureMainSession(){
   return sessionPromise||=(ort.InferenceSession.create(modelBytes,{executionProviders:['wasm'],...sessionOptions,...(debugRuntime&&{logSeverityLevel:0,logVerbosityLevel:1})}).then(value=>session=value));
 }
 
 function pumpRecognitionPool(){
-  if(poolFlush&&poolQueue.length<pageBatch)return;
+  if(poolFlush&&poolQueue.length<pageBatch&&!poolQueue[0]?.batch)return;
   while(idleWorkers.length&&poolQueue.length){
-    const slot=idleWorkers.pop(),tasks=[poolQueue.shift()];
-    while(tasks.length<pageBatch&&poolQueue[0]?.scale===tasks[0].scale)tasks.push(poolQueue.shift());
+    const tasks=takeRecognitionBatch(poolQueue,pageBatch);
+    if(!tasks.length)return;
+    const slot=idleWorkers.pop();
     slot.tasks=tasks;
-    slot.worker.postMessage({type:'recognize',scale:tasks[0].scale,pages:tasks.map(task=>({bitmap:task.bitmap,lines:task.lines}))},tasks.map(task=>task.bitmap));
+    const pages=tasks.map(task=>({bitmap:task.bitmap,prepared:task.prepared,lines:task.lines}));
+    const transfers=tasks.flatMap(task=>task.prepared?task.prepared.map(line=>line.gray.buffer):[task.bitmap]);
+    slot.worker.postMessage({type:'recognize',scale:tasks[0].scale,pages},transfers);
   }
 }
 
@@ -190,7 +205,8 @@ async function initializeRecognitionPool(codec,model){
           if(task.timing&&data.timing){
             // Shared batch work is attributed by line count, not individual page latency.
             const fraction=count?task.lines.length/count:1/tasks.length;
-            Object.assign(task.timing,Object.fromEntries(Object.entries(data.timing).map(([key,value])=>[key,value*fraction])),{recognition_batch_pages:tasks.length});
+            for(const [key,value]of Object.entries(data.timing))task.timing[key]=(task.timing[key]||0)+value*fraction;
+            task.timing.recognition_batch_pages=tasks.length;
           }
           task.resolve(task.includeLines?data.pages[index].lines:data.pages[index].text);
         });
@@ -201,19 +217,58 @@ async function initializeRecognitionPool(codec,model){
       poolError=new Error(`${event.message||'Recognition worker failed'}. Reload this app to retry.`);
       reject(poolError);for(const task of slot.tasks||[])task.reject(poolError);slot.tasks=null;
       idleWorkers=idleWorkers.filter(value=>value!==slot);
-      for(const task of poolQueue.splice(0)){task.bitmap.close();task.reject(poolError)}
+      for(const task of poolQueue.splice(0)){task.bitmap?.close();task.reject(poolError)}
     };
     const runtime=backend==='webgpu'?gpuRuntimePaths:runtimePaths;
-    worker.postMessage({type:'init',backend,runtimeMjs:runtime.mjs,runtimeWasm:runtime.wasm,model:model.slice(0),codec,recognizer:recognizer.id,widthMultiple:recognizer.widthMultiple,timing:collectTimings,batchSize,bucketSize,sortedBatches,sessionOptions});
+    worker.postMessage({type:'init',backend,runtimeMjs:runtime.mjs,runtimeWasm:runtime.wasm,model:model.slice(0),codec,recognizer:recognizer.id,widthMultiple:recognizer.widthMultiple,gpuArgMax,timing:collectTimings,batchSize,bucketSize,sortedBatches,sessionOptions});
   })));
   return slots;
 }
 
-async function recognizeInPool(bitmap,lines,scale,includeLines=false,timing){
-  try{await poolReady;if(poolError)throw poolError}catch(error){bitmap.close();throw error}
+function initializePreparationWorker(){
+  const worker=new Worker(assetUrl('preparationWorker','./dist/preparation-worker.js'));
+  const slot=preparation={worker,pending:new Map(),nextId:0};
   return new Promise((resolve,reject)=>{
-    poolQueue.push({bitmap,lines,scale,includeLines,timing,resolve,reject});
-    if(pageBatch>1&&!poolFlush)poolFlush=setTimeout(()=>{poolFlush=null;pumpRecognitionPool()},8);
+    worker.onmessage=({data})=>{
+      if(data.type==='ready'){resolve();return}
+      const task=slot.pending.get(data.id);slot.pending.delete(data.id);
+      if(!task)return;
+      if(data.error)task.reject(new Error(data.error));
+      else{
+        if(task.timing&&data.timing)Object.assign(task.timing,data.timing);
+        task.resolve(data.prepared);
+      }
+    };
+    worker.onerror=event=>{
+      poolError=new Error(`${event.message||'Crop preparation worker failed'}. Reload this app to retry.`);
+      reject(poolError);
+      for(const task of slot.pending.values())task.reject(poolError);
+      slot.pending.clear();
+      for(const task of poolQueue.splice(0)){task.bitmap?.close();task.reject(poolError)}
+    };
+    worker.postMessage({type:'init',timing:collectTimings});
+  });
+}
+
+async function recognizeInPool(bitmap,lines,scale,includeLines=false,timing,batch){
+  let prepared;
+  try{
+    await poolReady;if(poolError)throw poolError;
+    if(preparation){
+      const slot=preparation,id=++slot.nextId;
+      const source=bitmap;bitmap=undefined;
+      prepared=await new Promise((resolve,reject)=>{
+        slot.pending.set(id,{resolve,reject,timing});
+        try{slot.worker.postMessage({id,bitmap:source,lines,scale},[source])}
+        catch(error){slot.pending.delete(id);source.close();reject(error)}
+      });
+      if(poolError)throw poolError;
+    }
+  }catch(error){bitmap?.close();throw error}
+  return new Promise((resolve,reject)=>{
+    if(batch)batch.queued=true;
+    poolQueue.push({bitmap,prepared,lines,scale,includeLines,timing,batch,resolve,reject});
+    if(pageBatch>1&&!batch&&!poolFlush)poolFlush=setTimeout(()=>{poolFlush=null;pumpRecognitionPool()},8);
     pumpRecognitionPool();
   });
 }
@@ -267,9 +322,16 @@ $('file').onchange = async () => {
   $('document').textContent='';text.textContent='';setCanvasSize(1,1);status.textContent='Loading page…';
   try{
     if(pdf)await pdf.destroy();pdf=null;imageBitmap?.close();imageBitmap=null;
+    pdfWorker?.destroy();pdfWorkerPort?.terminate();pdfWorker=pdfWorkerPort=undefined;
     await ready;
     // Keep the immutable File, not PDF.js's transferred/detached ArrayBuffer.
-    if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf'))pdf=await getDocument({data:await file.arrayBuffer()}).promise;
+    if(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf')){
+      if(explicitPdfPort&&embedded?.pdfWorker&&!pdfWorker){
+        pdfWorkerPort=new Worker(GlobalWorkerOptions.workerSrc,{type:'module'});
+        pdfWorker=new PDFWorker({port:pdfWorkerPort});
+      }
+      pdf=await getDocument({data:await file.arrayBuffer(),...(pdfWorker&&{worker:pdfWorker})}).promise;
+    }
     else imageBitmap=await createImageBitmap(file);
     await renderPage(1);loadedFile=file;
     text.textContent='Drag a crop or recognize the document.';status.textContent='Page 1 ready.';
@@ -356,13 +418,13 @@ async function segment(canvas,timing) {
   return {lines,seconds:(performance.now()-started)/1000};
 }
 
-async function recognize(canvas, timing, withLayout=false) {
+async function recognize(canvas, timing, withLayout=false,batch) {
   await ready;const mode=scaleOverride||1;
   const {lines,seconds}=await segment(canvas,timing);
   if(timing){timing.layout_seconds=seconds;timing.layout_boxes=lines.map(line=>line.ocrBox||{x:line.x||0,y:line.y||0,width:line.width,height:line.height})}
   const inferenceStarted=performance.now();
   const texts=workerPoolSize&&$('segmentation').value==='tesseract'
-    ?await recognizeInPool(await createImageBitmap(canvas),lines.map(({x,y,width,height})=>({x,y,width,height})),mode,true,timing)
+    ?await recognizeInPool(await createImageBitmap(canvas),lines.map(({x,y,width,height})=>({x,y,width,height})),mode,true,timing,batch)
     :(await infer(lines,mode)).map(item=>item.text);
   if(timing)timing.inference_seconds=(performance.now()-inferenceStarted)/1000;
   const value=cleanModelText(texts.join('\n'));
@@ -424,6 +486,8 @@ $('all').onclick=async()=>{
   const target=$('document');target.textContent='';text.textContent='Waiting…';
   const count=pdf?.numPages||1,started=performance.now(),results=new Array(count);
   const timings=collectTimings?new Array(count):null;
+  const fixed=fixedBatches&&backend==='webgpu'&&workerPoolSize>0&&$('segmentation').value==='tesseract';
+  const microbatches=fixed?Array.from({length:Math.ceil(count/pageBatch)},(_,group)=>({expected:Math.min(pageBatch,count-group*pageBatch)})):[];
   const entries=[{pre:text},...Array.from({length:Math.max(0,count-1)},(_,index)=>{
     const pair=document.createElement('article');pair.className='pair';
     const img=omitPreviews?null:document.createElement('img');
@@ -437,6 +501,7 @@ $('all').onclick=async()=>{
   const runner=async()=>{
     while(next<=count){
       const number=next++,entry=entries[number-1],timing=collectTimings?{}:undefined,pageStarted=performance.now();let canvas;
+      const batch=fixed?{group:microbatches[Math.floor((number-1)/pageBatch)],index:number,queued:false}:undefined;
       try{
         const page=await documentCanvas(number);canvas=page.canvas;
         if(timing)timing.render_seconds=(performance.now()-pageStarted)/1000;
@@ -445,19 +510,22 @@ $('all').onclick=async()=>{
         if(timing)timing.preview_seconds=(performance.now()-previewStarted)/1000;
         if(timing)timing.render_preview_seconds=(performance.now()-pageStarted)/1000;
         entry.pre.textContent='Recognizing…';
-        const result=await recognize(canvas,timing,true);
+        const result=await recognize(canvas,timing,true,batch);
         entry.pre.textContent=result.text;
         results[number-1]={lines:result.lines,transform:page.transform};
         if(entry.img&&thumbnailPreviews){const started=performance.now();await setThumbnail(entry.img,canvas);if(timing)timing.preview_seconds=(performance.now()-started)/1000}
         if(timing){timing.page_wall_seconds=(performance.now()-pageStarted)/1000;timings[number-1]=timing}
-      }catch(error){failed++;entry.pre.textContent=`OCR failed: ${error.message}`}
+      }catch(error){
+        if(batch&&!batch.queued){batch.group.expected--;pumpRecognitionPool();}
+        failed++;entry.pre.textContent=`OCR failed: ${error.message}`;
+      }
       finally{if(canvas)canvas.width=canvas.height=1}
       done++;status.textContent=`Processed ${done} of ${count} pages · ${((performance.now()-started)/1000).toFixed(1)} seconds`;
       await new Promise(requestAnimationFrame);
     }
   };
   try{
-    await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize*pageBatch,$('segmentation').value))},runner));
+    await Promise.all(Array.from({length:Math.min(count,documentWorkers(workerPoolSize*pageBatch*(fixed?2:1),$('segmentation').value))},runner));
     if(timings){window.legalOcrLastDocumentTimings=timings;window.legalOcrLastDocumentLines=results.map(page=>page?.lines||[])}
     if(failed)status.textContent=poolError?.message||`OCR failed on ${failed} of ${count} pages. Retry recognition before downloading a PDF.`;
     else{ocrPages=results;status.textContent=`Done · ${count} pages in ${((performance.now()-started)/1000).toFixed(2)} seconds. Searchable PDF ready to download.`}

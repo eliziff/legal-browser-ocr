@@ -6,6 +6,40 @@ document thumbnails and includes CPU/WebGPU inference. The old builder flags
 below describe the frozen experiment source, not the current release builder.
 The current matched comparison is in the repository README.
 
+## Browser pipeline follow-up (v0.2.3)
+
+The released browser defaults use a real PDF.js module worker, fixed ordered
+four-page GPU batches and two bounded batches of document work. One GPU
+recognizer overlaps a CPU crop worker and up to two CPU detectors; detector
+count decreases on browsers reporting fewer cores. CPU recognition retains
+its core-based worker limits. Crop sampling, recognition width and weights
+are unchanged.
+
+The full 55-page, three-warm-pass test measured 6.05 pages/s on the i3-1315U /
+Intel UHD laptop and 12.73 on the Ryzen 5 2600X / RTX 3080 Ti desktop, at 2.512%
+and 2.606% CER. Frozen v0.2.2 controls measured 5.46 and 8.56, with identical
+recognized text on each machine. Initial model loading and PDF export are
+excluded. The README records first-document latency separately.
+
+For ablations, `prepareWorker=0`, `fixedBatch=0` and `pdfPort=0` disable their
+respective stages, and `layoutBackend=webgpu&layoutWorkers=1` restores GPU
+detection. These switches are measurement controls. They are unnecessary for
+normal use. Turning off the crop worker measured 5.89 pages/s on the laptop
+(three passes) and 10.24 on the desktop (one pass).
+
+`gpuArgMax=128` is experimental and requires an alternate GPU graph. Its WGSL
+parallel reduction passed independent numeric and tie checks and reduced a
+prepared-tensor component from 7.6 to 4.1 ms on the laptop. It did not improve
+the ordinary full-document configuration, so the released defaults retain
+the existing compact-ID graph. ONNX Runtime Web 1.30's new C++/JSPI backend
+also remained experimental: 4.71 pages/s versus the frozen 1.22 control's
+5.46 on the laptop. CPU runtime and model assets remain unchanged.
+
+The owning experiment harnesses and aggregate findings are in
+`experiments/ocr-candidate-screen` in the Beaver workspace. Private receipts
+include source, artifact and input hashes. Earlier builder commands below
+describe historical experiments rather than the current five-tier builder.
+
 These options exercise the normal file, recognition and searchable-PDF flow.
 They preserve the packaged recognizer and original OCR image resolution.
 

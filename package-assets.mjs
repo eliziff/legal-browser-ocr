@@ -14,6 +14,7 @@ export function packageAssets() {
     ['gpuWasm', 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm', 'dist/ort-wasm-simd-threaded.jsep.wasm'],
     ['pdfWorker', 'dist/pdf.worker.min.mjs', 'dist/pdf.worker.min.mjs'],
     ['recognitionWorker', 'dist/recognition-worker.js', 'dist/recognition-worker.js'],
+    ['preparationWorker', 'dist/preparation-worker.js', 'dist/preparation-worker.js'],
     ['detectorWorker', 'dist/detector-worker.js', 'dist/detector-worker.js'],
     ['layoutWorker', 'tesseract-layout-worker.js', 'tesseract-layout-worker.js'],
     ['layoutCore', 'assets/layout-core.mjs', 'assets/layout-core.mjs'],

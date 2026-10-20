@@ -1,10 +1,10 @@
 {
   "name": "legal-browser-ocr",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild app.js --bundle --format=esm --minify --legal-comments=inline --outfile=dist/app.js && esbuild recognition-worker.js --bundle --format=iife --minify --legal-comments=inline --outfile=dist/recognition-worker.js && esbuild experiments/ocr-speed/detector-worker.js --bundle --format=iife --minify --legal-comments=inline --outfile=dist/detector-worker.js && node -e \"const fs=require('node:fs');for(const name of ['ort-wasm-simd-threaded.mjs','ort-wasm-simd-threaded.wasm','ort-wasm-simd-threaded.jsep.mjs','ort-wasm-simd-threaded.jsep.wasm'])fs.copyFileSync('node_modules/onnxruntime-web/dist/'+name,'dist/'+name);fs.copyFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs','dist/pdf.worker.min.mjs')\"",
+    "build": "esbuild app.js --bundle --format=esm --minify --legal-comments=inline --outfile=dist/app.js && esbuild recognition-worker.js --bundle --format=iife --minify --legal-comments=inline --outfile=dist/recognition-worker.js && esbuild experiments/ocr-speed/detector-worker.js --bundle --format=iife --minify --legal-comments=inline --outfile=dist/detector-worker.js && esbuild preparation-worker.js --bundle --format=iife --minify --legal-comments=inline --outfile=dist/preparation-worker.js && node -e \"const fs=require('node:fs');for(const name of ['ort-wasm-simd-threaded.mjs','ort-wasm-simd-threaded.wasm','ort-wasm-simd-threaded.jsep.mjs','ort-wasm-simd-threaded.jsep.wasm'])fs.copyFileSync('node_modules/onnxruntime-web/dist/'+name,'dist/'+name);fs.copyFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs','dist/pdf.worker.min.mjs')\"",
     "runtime": "npm run build && node build-runtime.mjs",
     "bundle": "npm run runtime && node build-single-html.mjs",
     "test": "node --test --test-concurrency=1 *.test.mjs"
