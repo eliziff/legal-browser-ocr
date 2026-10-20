@@ -163,9 +163,14 @@ export class LineRecognizer {
       const batch = group.slice(offset, offset + batchSize), multiple = this.profile.widthMultiple || 8;
       const width = Math.ceil(Math.max(this.profile.minimum, ...batch.map(line => line.width)) / multiple) * multiple;
       const { ort } = this;
+      const previousBuilds=this.session.createdSlots||0,previousBuildSeconds=this.session.buildSeconds||0;
       started=timing?performance.now():0;
+      const target=batch[0].gpu&&this.profile.gpuDirect?await this.session.inputTensor(width,batch.length):undefined;
+      if(timing)timing.model_seconds+=(performance.now()-started)/1000;
+      started=timing?performance.now():0;
+      const packed=batch[0].gpu?this.gpuPreparer.pack(batch,width,target):undefined;
       const feeds={
-        image: new ort.Tensor('float32', packLines(batch, this.profile, width), [batch.length, this.profile.channels, this.profile.height, width]),
+        image: packed?.tensor||new ort.Tensor('float32', packLines(batch, this.profile, width), [batch.length, this.profile.channels, this.profile.height, width]),
         widths: new ort.Tensor('int64', BigInt64Array.from(batch, line => BigInt(line.width)), [batch.length]),
       };
       if(timing){const seconds=(performance.now()-started)/1000;timing.pack_seconds=(timing.pack_seconds||0)+seconds;timing.crop_pack_seconds+=seconds;}
@@ -173,9 +178,13 @@ export class LineRecognizer {
       const custom=Boolean(this.argmax)&&!confidence;
       const ids = !confidence && (custom||this.session.outputNames.includes('class_ids'));
       let out;
-      const dispose=()=>{for(const value of Object.values(out||{}))value.dispose();for(const value of Object.values(feeds))value.dispose()};
+      const dispose=()=>{for(const value of Object.values(out||{}))value.dispose();for(const value of Object.values(feeds))if(value!==packed?.tensor)value.dispose();packed?.release()};
       try {
       out = await this.session.run(feeds, ids&&!custom ? ['class_ids', 'lengths'] : ['logits', 'lengths']);
+      if(timing&&this.session.createdSlots!==undefined){
+        timing.gpu_session_builds=(timing.gpu_session_builds||0)+this.session.createdSlots-previousBuilds;
+        timing.gpu_session_build_seconds=(timing.gpu_session_build_seconds||0)+this.session.buildSeconds-previousBuildSeconds;
+      }
       if(custom){
         const data=await this.argmax.run(out.logits);
         out.class_ids=new ort.Tensor('uint32',data,[batch.length,out.logits.dims[1]]);
@@ -188,6 +197,9 @@ export class LineRecognizer {
         this.inputShapes.add(shape);
         timing.model_batches = (timing.model_batches || 0) + 1;
         timing.recognition_lines = (timing.recognition_lines || 0) + batch.length;
+        const executedLines = this.session.batch || batch.length;
+        timing.executed_lines = (timing.executed_lines || 0) + executedLines;
+        timing.executed_pixels = (timing.executed_pixels || 0) + executedLines * width * this.profile.height;
         timing.padded_pixels = (timing.padded_pixels || 0) + batch.length * width * this.profile.height;
         timing.used_pixels = (timing.used_pixels || 0) + batch.reduce((sum, line) => sum + line.width * this.profile.height, 0);
         timing.output_bytes = (timing.output_bytes || 0) + Object.values(out).reduce((sum, value) => sum + (value.location==='gpu-buffer'?0:value.data.byteLength), 0);

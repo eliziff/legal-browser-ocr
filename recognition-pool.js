@@ -23,9 +23,55 @@ export function createLayoutPool(options, count) {
 }
 
 /** The app and embedding hosts use the same preparation, batching and worker lifecycle. */
-export function createRecognitionPool({ workerUrl, preparationUrl, runtime, model, codec, options }) {
+export function createRecognitionPool({ fallback, ...settings }) {
+  if (!fallback) return createWorkerPool(settings);
+  let pool = createWorkerPool(settings), configuration = settings.options, recovery, stopped, rejectDisposal;
+  const ended = new Promise((_, reject) => { rejectDisposal = reject; });
+  ended.catch(() => {});
+  function recover(cause) {
+    if (stopped || cause.name === 'AbortError') return Promise.reject(stopped || cause);
+    if (!recovery) {
+      pool.dispose(cause);
+      recovery = Promise.race([ended, Promise.resolve().then(fallback).then(cpu => {
+        if (stopped) throw stopped;
+        configuration = cpu.options; pool = createWorkerPool(cpu);
+        return pool.ready;
+      })]);
+    }
+    return recovery;
+  }
+  const ready = pool.ready.catch(recover);
+  ready.catch(() => {});
+  return {
+    ready,
+    get configuration() { return configuration; },
+    get error() { return stopped || pool.error; },
+    pump() { pool.pump(); },
+    dispose(cause = new DOMException('Recognition cancelled', 'AbortError')) {
+      if (stopped) return;
+      stopped = cause; rejectDisposal(cause); pool.dispose(cause);
+    },
+    async recognize(task) {
+      let bitmap = task.bitmap;
+      try {
+        await Promise.race([ready, ended]);
+        if (stopped) throw stopped;
+        if (configuration.backend === 'webgpu') {
+          const active = pool, input = task.replay ? bitmap : await createImageBitmap(bitmap);
+          if (stopped) { input.close(); throw stopped; }
+          try { return await active.recognize({ ...task, bitmap: input }); }
+          catch (cause) { await recover(cause); if (task.replay) bitmap = await task.replay(); }
+        }
+        // GPU batches may be incomplete after a failure; CPU retries queue independently.
+        return await pool.recognize({ ...task, bitmap, batch: undefined });
+      } finally { task.bitmap?.close(); }
+    },
+  };
+}
+
+function createWorkerPool({ workerUrl, preparationUrl, runtime, model, codec, options }) {
   const { workerPoolSize, pageBatch, batchSize, bucketSize, sortedBatches, sessionOptions,
-    backend, recognizer, widthMultiple, gpuArgMax, captureMode, captureEnabled, gpuPrep, collectTimings } = options;
+    backend, recognizer, widthMultiple, workerThreads, gpuArgMax, captureMode, captureEnabled, gpuCacheShapes, gpuPrep, gpuDirect, collectTimings } = options;
   const slots = [], idle = [], queue = [], prepared = new Map();
   let preparation, nextId = 0, flush, error;
   function dispose(cause = new DOMException('Recognition cancelled', 'AbortError')) {
@@ -56,6 +102,7 @@ export function createRecognitionPool({ workerUrl, preparationUrl, runtime, mode
     ...Array.from({ length: workerPoolSize }, () => new Promise((resolve, reject) => {
       const worker = new Worker(workerUrl), slot = { worker, tasks: null, rejectReady: reject }; slots.push(slot);
       worker.onmessage = ({ data }) => {
+        if (data.type === 'fatal') { dispose(new Error(data.message)); return; }
         if (data.type === 'ready') { idle.push(slot); resolve(); pump(); return; }
         const tasks = slot.tasks; slot.tasks = null;
         if (data.type === 'error') {
@@ -76,7 +123,7 @@ export function createRecognitionPool({ workerUrl, preparationUrl, runtime, mode
       };
       worker.onerror = event => dispose(new Error(event.message || 'Recognition worker failed'));
       const copy = model.slice();
-      worker.postMessage({ type: 'init', backend, captureMode, captureEnabled, gpuPrep, runtimeMjs: runtime.mjs,
+      worker.postMessage({ type: 'init', backend, captureMode, captureEnabled, gpuCacheShapes, gpuPrep, gpuDirect, workerThreads, runtimeMjs: runtime.mjs,
         runtimeWasm: runtime.wasm, model: copy, codec, recognizer, widthMultiple, gpuArgMax, timing: collectTimings,
         batchSize, bucketSize, sortedBatches, sessionOptions }, [copy.buffer]);
     })),

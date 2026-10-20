@@ -8,10 +8,14 @@ export const ocrTiers = Object.freeze({
   extreme: { label: 'Extreme · more errors', model: 'light', detectorSide: 768 },
 });
 
-export const ocrModels = Object.freeze({
-  standard: { cpu: 'assets/indra-followup/student8ids/model.onnx', gpu: 'assets/indra-followup/gpu8h/model.onnx', codec: 'assets/indra-followup/student8ids/codec.json' },
-  light: { cpu: 'assets/indra-followup/student10c64ids/model.onnx', gpu: 'assets/indra-followup/gpu64h/model.onnx', codec: 'assets/indra-followup/student10c64ids/codec.json' },
+export const nativeModels = Object.freeze({
+  standard: { cpu: 'assets/indra-followup/student8cropids/model.onnx', gpu: 'assets/indra-followup/gpu8croph/model.onnx', codec: 'assets/indra-followup/student8cropids/codec.json' },
+  light: { cpu: 'assets/indra-followup/student10c64cropids/model.onnx', gpu: 'assets/indra-followup/gpu64croph/model.onnx', codec: 'assets/indra-followup/student10c64cropids/codec.json' },
 });
+
+// Browser command replay takes an external mask; native engines retain width inputs.
+export const ocrModels = Object.freeze(Object.fromEntries(Object.entries(nativeModels).map(([name, pack]) =>
+  [name, { ...pack, gpu: pack.gpu.replace('/model.onnx', '-capture/model.onnx') }])));
 
 export function ocrTier(id = DEFAULT_TIER) {
   if (!Object.hasOwn(ocrTiers, id)) throw new Error(`Unknown OCR tier: ${id}`);

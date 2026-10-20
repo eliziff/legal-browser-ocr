@@ -12,7 +12,9 @@ download a package from [Releases](https://github.com/eliziff/legal-browser-ocr/
 | Package | Use |
 | --- | --- |
 | `legal-browser-ocr-runtime.tar.gz` | Serve the application and its local assets |
-| `legal-browser-ocr.html` | Open the self-contained application, including offline |
+| `legal-browser-ocr.html` | Open the self-contained CPU/WebGPU application, including offline |
+| `legal-browser-ocr-cpu-compact.html` | Smaller CPU application with Quality, Balanced, Fast and Turbo |
+| `legal-browser-ocr-extreme-compact.html` | Smallest CPU application, Extreme only |
 | `legal-ocr-models.tar.gz` | Shared models, tier manifest, checksums and model terms for native readers |
 | `legal-ocr-runtime-windows-x64.zip` | Native PDF/image OCR with automatic CPU/DirectML selection and all five tiers |
 
@@ -26,8 +28,13 @@ Supported browsers automatically use WebGPU with FP16 when available. Add
 `?backend=cpu` to use CPU inference or `?backend=webgpu` to require GPU inference.
 Measured worker overrides belong to individual benchmark configurations; the
 CPU defaults follow the browser's reported hardware concurrency.
-GPU recognition overlaps CPU line detection and crop preparation. PDF parsing
+Automatic mode retries on CPU if GPU initialization or the GPU device fails.
+GPU recognition overlaps CPU line detection with GPU crop preparation and uses
+static command replay. Its shape cache retains at most eight shapes and 256 MiB
+of owned buffers, in addition to runtime resources and page textures. PDF parsing
 uses a dedicated worker, with two bounded page batches feeding the recognizer.
+Ordinary single-image scan pages reuse the decoded image; other pages use the
+normal PDF.js renderer.
 
 Embedding hosts call `createBrowserOcr(assets)` from `browser-runtime.js`, supplying
 asynchronous `assets.bytes(name)` and `assets.url(name)` functions. The returned
@@ -58,9 +65,9 @@ on it. Document thumbnails are omitted; the initial input/crop view remains.
 
 ## Recorded performance
 
-The v0.2.0 comparison below was measured on a **Ryzen 5 2600X desktop**,
-using full Chromium 151 and CPU
-WebAssembly. Every row uses the same **55-page PDF**, rendered by PDF.js at
+The comparison below uses a **Ryzen 5 2600X desktop**, full Chromium 151 and CPU
+WebAssembly. Our rows are v0.2.4; stock Indra and Tesseract retain their earlier
+matched baseline measurements. Every row uses the same **55-page PDF**, rendered by PDF.js at
 144 dpi, and the same human gold transcripts: 145,475 normalized characters.
 Figures are medians of three warm whole-document passes, including rendering,
 line detection, recognition and text assembly. Startup, the initial input view
@@ -68,14 +75,15 @@ and PDF export are excluded; document thumbnails are disabled.
 
 | Configuration | Pages/s | Character error rate |
 | --- | ---: | ---: |
-| **Our Indra Balanced** | **7.40** | **2.601%** |
-| **Our Indra Quality** | **7.00** | **2.246%** |
+| **Our Indra Balanced** | **9.48** | **2.296%** |
+| **Our Indra Quality** | **8.86** | **2.015%** |
 | Stock Indra recognizer | 6.87 | 3.368% |
 | Tesseract.js Fast | 2.27 | 2.281% |
 
-Quality is about **3.1 times faster than Tesseract.js Fast** on these pages, with
-a slightly lower character error rate. Balanced is about **3.3 times faster**,
-with a higher error rate.
+Quality is about **3.9 times faster than the recorded Tesseract.js Fast baseline**
+on these pages, with a lower character error rate. Balanced is about **4.2 times
+faster**, with a slightly higher error rate. The CPU baseline runs predate the
+new detector decoder and kernel; they have not been rerun with those changes.
 
 Our profiles use the eight-block fine-tuned recognizer: 896px line detection for
 Balanced and 1024px for Quality. The stock row uses the untouched pretrained
@@ -87,7 +95,7 @@ and text/line output.
 
 These are full-page results on an already examined legal-document partition,
 not a fresh holdout or a guarantee for other documents or computers. The small
-CER difference between Quality and Tesseract is 52 character edits. Human gold
+CER difference between Balanced and Tesseract is 22 character edits. Human gold
 transcripts determine CER; the existing training line boxes came from automatic
 segmentation and are not hand-corrected geometry gold.
 
@@ -95,26 +103,36 @@ The benchmark harness and retained aggregate findings are described in the
 [speed experiment guide](experiments/ocr-speed/README.md). GPU component timings
 are separate from this CPU table.
 
-The **v0.2.3 browser runtime** uses the same models and full recognition width.
-Its pipeline overlaps PDF rendering, CPU detection/preparation and GPU inference.
-The same 55-page benchmark, with three warm passes, measured:
+The **v0.2.4 browser runtime** adds crop-robust recognizers, GPU crop preparation,
+command replay, guarded scan-image reuse, faster detection decoding and a fused
+SIMD128 detector activation. GPU execution settings are shared by the application
+and embedding runtime; no experimental URL flags are needed.
 
-| Balanced browser runtime | CPU pages/s | CPU CER | WebGPU pages/s | WebGPU CER |
+On the same 55-page PDF, the laptop's full CPU/WebGPU package measured:
+
+| Tier, i3-1315U / Intel UHD, Chromium 149 | CPU pages/s | CPU CER | WebGPU pages/s | WebGPU CER |
 | --- | ---: | ---: | ---: | ---: |
-| i3-1315U laptop / Intel UHD, Chromium 149 | 4.55 | 2.513% | **6.05** | 2.512% |
-| Ryzen 5 2600X / RTX 3080 Ti, Chromium 151 | 7.72 | 2.601% | **12.73** | 2.606% |
+| Balanced | 3.70 | 2.211% | **7.03** | **2.213%** |
+| Quality | 3.94 | 2.018% | **6.68** | **2.022%** |
 
-Frozen v0.2.2 GPU controls measured 5.46 and 8.56 pages/s respectively: the new
-runtime is about **11% faster on the laptop** and **49% faster on the desktop**,
-with identical recognized text on each machine. CPU and GPU detection can differ
-slightly in line coordinates. Desktop Quality WebGPU measured **9.52 pages/s /
-2.252% CER**. These are Chromium results, not guarantees for other browsers or
-documents.
+Desktop Chromium 151 measured **18.25 WebGPU pages/s / 2.302% CER** in Balanced
+and **14.81 / 2.011%** in Quality on the Ryzen 5 2600X / RTX 3080 Ti. These are
+three-warm-pass medians. Shape-specific session compilation affects the first
+document; warm throughput excludes initialization, input opening and PDF export.
+CPU and WebGPU use their respective model exports and crop preparation paths.
 
-The first 55-page GPU document took **11.34 seconds on the laptop** and **6.66
-seconds on the desktop**; model initialization took another 2.71 and 3.25 seconds.
-Input opening and PDF export are excluded. All 55 exported text pages, unchanged
-original first-page pixels and reopening the input passed verification.
+Training changes blank margins while preserving nonwhite ink and human labels.
+It reduces laptop Balanced page CER from 2.498% to 2.213%, Quality from 2.237%
+to 2.022%, and Extreme from 4.795% to 3.954%, with unchanged architectures and
+recognition width. Clean continuation without crop augmentation did not improve
+the selected checkpoint. These pages have been examined during development;
+they remain a regression benchmark, not a fresh holdout.
+
+Chromium and Firefox pass offline PDF/export and embedding checks, including
+CPU recovery after GPU initialization or device failure. Apple Safari hardware
+remains untested. Timing varies with hardware, document layout and machine load;
+CPU tier measurements can overlap. All 55 exported text pages and unchanged
+original first-page pixels are checked by the full-document harness.
 
 ## Develop and package
 
@@ -137,6 +155,35 @@ runtime archive and standalone HTML into `dist/`.
 [build-single-html.mjs](build-single-html.mjs) package the same assets.
 Tests cover preprocessing, layout ordering, text geometry and PDF export; they
 do not certify accuracy on a new corpus.
+
+The release includes smaller standalone CPU editions. Sizes use decimal MB and
+include PDF input and searchable-PDF export:
+
+| Standalone edition | Offline HTML | Gzip transfer | Included tiers |
+| --- | ---: | ---: | --- |
+| Full CPU/WebGPU | 22.84 MB | 16.84 MB | All five |
+| Accurate compact CPU | **5.39 MB** | **3.71 MB** | Quality through Turbo |
+| Compact CPU Extreme | **3.83 MB** | **2.54 MB** | Extreme |
+
+For scale, the installed Tesseract.js 7.0.0 SIMD-LSTM engine, worker/API and
+Fast English data total **3.46 MB gzip**, excluding its PDF application.
+The compact engine retains the required operators and portable preoptimized ORT
+models. Recognizer weights are rounded to BF16 precision stored in FP32 tensors;
+inference uses FP32 math and requires no BF16 hardware support. The full edition
+retains the original exported precision and automatic WebGPU support.
+
+On the laptop, the compact CPU edition measured **5.40 pages/s / 2.209% CER**
+in Balanced and **4.98 / 2.022%** in Quality. Compact Extreme measured **8.30 /
+3.966%**. These are three-warm-pass measurements on the same 55-page PDF;
+machine timing drift prevents attributing the difference from the full package
+to compaction alone.
+
+Build the ordinary CPU editions with `node build-single-html.mjs cpu` or
+`node build-single-html.mjs lite` after `npm run build`. The compact engine and
+precision variants use the owning workspace's OCR experiment harness; see the
+[experiment guide](experiments/ocr-speed/README.md). Native model archives retain
+the normal width-input GPU graphs required by CUDA/DirectML readers; browser GPU
+graphs use an equivalent external mask for command replay.
 
 ## Credits and license
 

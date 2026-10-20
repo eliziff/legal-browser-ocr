@@ -40,8 +40,14 @@ export function createBrowserOcr(assets) {
       modelPath: detectorModel, configPath: detectorConfig, runtimeMjs: layoutRuntime.mjs,
       runtimeWasm: layoutRuntime.wasm, sessionOptions: configuration.sessionOptions,
     } }, configuration.layoutWorkerCount);
-    recognition = createRecognitionPool({ workerUrl, preparationUrl, runtime, model,
-      codec: JSON.parse(new TextDecoder().decode(codec)), options: { ...configuration, recognizer: 'indra' } });
+    const settings = { workerUrl, preparationUrl, runtime, model,
+      codec: JSON.parse(new TextDecoder().decode(codec)), options: { ...configuration, recognizer: 'indra' } };
+    recognition = createRecognitionPool({ ...settings, ...(backend === 'webgpu' && { fallback: async () => {
+      const model = await assets.bytes(pack.cpu);
+      configuration = { backend: 'wasm', tier: DEFAULT_TIER, ...runtimeDefaults('wasm') };
+      return { ...settings, model, runtime: layoutRuntime, preparationUrl: undefined,
+        options: { ...configuration, recognizer: 'indra' } };
+    } }) });
     await recognition.ready; quiet();
   })();
   initializationTimer = setTimeout(() => dispose(new Error('The local OCR runtime did not initialize.')), 60_000);

@@ -1,6 +1,6 @@
 // Indra decoding/XY-cut follow https://github.com/datalab-to/indra (Apache-2.0).
 // Paddle DB geometry follows PaddleOCR's DBPostProcess (Apache-2.0).
-function components(mask, width, height, diagonal, visit) {
+function components(mask, width, height, visit) {
   const queue = new Int32Array(mask.length);
   for (let seed = 0; seed < mask.length; seed++) {
     if (!mask[seed]) continue;
@@ -9,7 +9,7 @@ function components(mask, width, height, diagonal, visit) {
     while (head < tail) {
       const index = queue[head++], x = index % width, y = Math.floor(index / width);
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        if ((!dx && !dy) || (!diagonal && dx && dy)) continue;
+        if (!dx && !dy) continue;
         const nx = x + dx, ny = y + dy, next = ny * width + nx;
         if (nx < 0 || nx >= width || ny < 0 || ny >= height || !mask[next]) continue;
         mask[next] = 0; queue[tail++] = next;
@@ -20,19 +20,31 @@ function components(mask, width, height, diagonal, visit) {
 }
 
 export function decodeIndra(data, width, height) {
-  const plane = width * height, mask = Uint8Array.from(data.subarray(0, plane), value => Number(value > 0)), boxes = [];
-  components(mask, width, height, false, (indices, count) => {
-    if (count < 2) return;
-    let left = width, right = 0, top = 0, bottom = 0;
-    for (let i = 0; i < count; i++) {
-      const index = indices[i], x = index % width, y = (Math.floor(index / width) + .5) * 2;
+  const plane = width * height, mask = new Uint8Array(plane), queue = new Int32Array(plane), boxes = [];
+  for (let i = 0; i < plane; i++) mask[i] = Number(data[i] > 0);
+  for (let seed = 0; seed < plane; seed++) {
+    if (!mask[seed]) continue;
+    let head = 0, tail = 1, left = width, right = 0, top = 0, bottom = 0;
+    queue[0] = seed; mask[seed] = 0;
+    while (head < tail) {
+      const index = queue[head++], x = index % width, y = (Math.floor(index / width) + .5) * 2;
       left = Math.min(left, x); right = Math.max(right, x + 1);
       top += y - data[plane + index]; bottom += y + data[plane * 2 + index];
+      // Preserve the original up/left/right/down BFS and floating-point sum order.
+      let next = index - width;
+      if (index >= width && mask[next]) { mask[next] = 0; queue[tail++] = next; }
+      next = index - 1;
+      if (x > 0 && mask[next]) { mask[next] = 0; queue[tail++] = next; }
+      next = index + 1;
+      if (x + 1 < width && mask[next]) { mask[next] = 0; queue[tail++] = next; }
+      next = index + width;
+      if (next < plane && mask[next]) { mask[next] = 0; queue[tail++] = next; }
     }
-    top /= count; bottom /= count;
+    if (tail < 2) continue;
+    top /= tail; bottom /= tail;
     const extension = .15 * Math.max(1, bottom - top);
     boxes.push({ x0: left * 2 - extension, y0: top, x1: right * 2 + extension, y1: bottom });
-  });
+  }
   return boxes;
 }
 
@@ -67,7 +79,7 @@ function corners(rect, grow = 0) {
 export function decodePaddle(data, width, height, config) {
   const mask = Uint8Array.from(data, value => Number(value > config.threshold)), boxes = [];
   let candidates = 0;
-  components(mask, width, height, true, (indices, count) => {
+  components(mask, width, height, (indices, count) => {
     if (++candidates > config.maxCandidates || count < 3) return;
     const top = new Int32Array(width).fill(height), bottom = new Int32Array(width).fill(-1);
     let left = width, right = 0;

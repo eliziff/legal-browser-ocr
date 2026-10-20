@@ -30,6 +30,8 @@ test('documents use parallel pages only with isolated recognition workers',()=>{
 });
 
 test('app and embedding defaults share CPU budgets and the pipelined GPU configuration', () => {
+  assert.equal(runtimeDefaults('webgpu',8).layoutWorkerCount,2);
+  assert.equal(runtimeDefaults('webgpu',12).layoutWorkerCount,4);
   for (const parallelism of [1, 2, 4, 8, 16]) {
     const cpu = runtimeDefaults('wasm', parallelism), gpu = runtimeDefaults('webgpu', parallelism);
     assert.ok(cpu.workerPoolSize >= 1 && cpu.workerPoolSize <= 6);
@@ -40,6 +42,12 @@ test('app and embedding defaults share CPU budgets and the pipelined GPU configu
     assert.equal(gpu.pageBatch, 4);
     assert.equal(gpu.pageConcurrency, 8);
     assert.equal(gpu.layoutBackend, 'wasm');
-    assert.equal(gpu.prepareWorker, true);
+    assert.equal(gpu.prepareWorker, false);
+    assert.equal(gpu.captureMode, true);
+    assert.equal(gpu.captureEnabled, true);
+    assert.equal(gpu.gpuPrep, true);
+    assert.equal(gpu.gpuArgMax, 128);
+    assert.equal(cpu.captureMode, false);
+    assert.equal(cpu.gpuPrep, false);
   }
 });

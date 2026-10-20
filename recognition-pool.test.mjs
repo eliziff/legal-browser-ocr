@@ -56,18 +56,97 @@ test('disposing an embedding runtime interrupts preparation even while assets ar
   assert.equal(bitmap.closed, true);
 });
 
+test('automatic GPU initialization failure starts the CPU pool and recognizes the page', async t => {
+  const workers = stubWorkers(t), pool = recoveringPool(), bitmap = image();
+  const reading = pool.recognize({ bitmap, lines: [{}] });
+  workers[0].onmessage({ data: { type: 'error', message: 'Invented GPU model failure' } });
+  await flush();
+  workers[1].onmessage({ data: { type: 'ready' } });
+  await flush();
+  workers[1].onmessage({ data: { type: 'result', pages: [{ text: 'Juniper inventory' }] } });
+  assert.equal(await reading, 'Juniper inventory');
+  assert.equal(pool.configuration.backend, 'wasm');
+  assert.equal(bitmap.closed, true);
+  assert.equal(workers[0].stopped, true);
+  pool.dispose();
+});
+
+test('GPU device loss retries active and queued pages once on CPU with their retained images', async t => {
+  const workers = stubWorkers(t);
+  const pool = recoveringPool(), images = [image(), image()];
+  workers[0].onmessage({ data: { type: 'ready' } });
+  await pool.ready;
+  const readings = images.map(bitmap => pool.recognize({ bitmap, lines: [{}] }));
+  await flush();
+  workers[0].onmessage({ data: { type: 'fatal', message: 'Invented device loss' } });
+  await flush();
+  assert.equal(workers.length, 2);
+  workers[1].onmessage({ data: { type: 'ready' } });
+  for (const text of ['Juniper inventory', 'Maple balance']) {
+    await flush();
+    workers[1].onmessage({ data: { type: 'result', pages: [{ text }] } });
+  }
+  assert.deepEqual(await Promise.all(readings), ['Juniper inventory', 'Maple balance']);
+  assert.ok(images.every(bitmap => bitmap.closed));
+  assert.equal(pool.configuration.backend, 'wasm');
+  pool.dispose();
+  assert.ok(workers.every(worker => worker.stopped));
+});
+
+test('cancelling while CPU recovery assets are pending rejects callers without creating more workers', async t => {
+  const workers = stubWorkers(t);
+  let finish;
+  const pool = recoveringPool(() => new Promise(resolve => { finish = resolve; })), bitmap = image();
+  const reading = pool.recognize({ bitmap, lines: [{}] });
+  workers[0].onmessage({ data: { type: 'error', message: 'Invented GPU model failure' } });
+  await flush();
+  pool.dispose();
+  await assert.rejects(reading, { name: 'AbortError' });
+  await assert.rejects(pool.ready, { name: 'AbortError' });
+  finish(poolSettings('wasm'));
+  await flush();
+  assert.equal(bitmap.closed, true);
+  assert.equal(workers.length, 1);
+});
+
+test('a host can replay consumed page pixels after GPU failure without keeping an extra bitmap', async t => {
+  const workers = stubWorkers(t), pool = recoveringPool(), bitmap = image();
+  workers[0].onmessage({ data: { type: 'ready' } }); await pool.ready;
+  let replayed = false;
+  const reading = pool.recognize({ bitmap, lines: [{}], replay: async () => {
+    assert.equal(bitmap.closed, true);
+    replayed = true; return image();
+  } });
+  await flush(); bitmap.close();
+  workers[0].onmessage({ data: { type: 'fatal', message: 'Invented GPU device loss' } });
+  await flush(); workers[1].onmessage({ data: { type: 'ready' } });
+  await flush(); workers[1].onmessage({ data: { type: 'result', pages: [{ text: 'Maple balance' }] } });
+  assert.equal(await reading, 'Maple balance');
+  assert.equal(replayed, true);
+  pool.dispose();
+});
+
 function createPool() {
   return createRecognitionPool({ workerUrl: '/invented-worker.js', runtime: {}, model: new Uint8Array([1]), codec: {},
     options: { workerPoolSize: 1, pageBatch: 1 } });
 }
 function image() { return { closed: false, close() { this.closed = true; } }; }
+function poolSettings(backend) {
+  return { workerUrl: '/invented-worker.js', runtime: {}, model: new Uint8Array([1]), codec: {},
+    options: { workerPoolSize: 1, pageBatch: 1, backend } };
+}
+function recoveringPool(fallback = () => poolSettings('wasm')) {
+  return createRecognitionPool({ ...poolSettings('webgpu'), fallback });
+}
+const flush = () => new Promise(resolve => setImmediate(resolve));
 function stubWorkers(t) {
-  const previous = globalThis.Worker, workers = [];
+  const previous = globalThis.Worker, previousBitmap = globalThis.createImageBitmap, workers = [];
+  globalThis.createImageBitmap ||= async () => image();
   globalThis.Worker = class {
     constructor() { workers.push(this); }
     postMessage() {}
     terminate() { this.stopped = true; }
   };
-  t.after(() => { globalThis.Worker = previous; });
+  t.after(() => { globalThis.Worker = previous; globalThis.createImageBitmap = previousBitmap; });
   return workers;
 }

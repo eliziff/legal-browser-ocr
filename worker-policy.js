@@ -12,9 +12,11 @@ export function runtimeDefaults(backend, parallelism = globalThis.navigator?.har
   const gpu = backend === 'webgpu';
   const workerPoolSize = gpu ? 1 : Math.min(6, Math.max(1, Math.floor(parallelism / 2)));
   const pageBatch = gpu ? 4 : 1;
-  return { workerPoolSize, layoutWorkerCount: Math.min(gpu ? 2 : 4, Math.max(1, Math.floor(parallelism / 3))),
-    batchSize: gpu ? 32 : 16, bucketSize: 24, sortedBatches: gpu, pageBatch,
-    prepareWorker: gpu, layoutBackend: 'wasm', widthMultiple: 8,
+  return { workerPoolSize, layoutWorkerCount: Math.min(4, Math.max(1, Math.floor(parallelism / 3))),
+    batchSize: 16, bucketSize: 24, sortedBatches: gpu, pageBatch,
+    prepareWorker: false, layoutBackend: 'wasm', widthMultiple: gpu ? 256 : 8, workerThreads: 1,
+    captureMode: gpu, captureEnabled: gpu, gpuPrep: gpu, gpuDirect: false,
+    gpuArgMax: gpu ? 128 : 0, gpuCacheShapes: 8, scanPages: true,
     pageConcurrency: documentWorkers(workerPoolSize * pageBatch * (gpu ? 2 : 1), 'tesseract'),
     sessionOptions: { graphOptimizationLevel: 'all' } };
 }

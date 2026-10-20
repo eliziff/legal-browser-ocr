@@ -1,6 +1,6 @@
 {
   "name": "legal-browser-ocr",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
   "dependencies": {
     "onnxruntime-web": "1.22.0",
     "pdf-lib": "1.17.1",
+    "pako": "1.0.11",
     "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {

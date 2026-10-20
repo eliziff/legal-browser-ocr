@@ -31,10 +31,11 @@ const modelOutput = resolve(dist, 'legal-ocr-models');
 assert.ok(modelOutput.startsWith(dist+sep));
 rmSync(modelOutput, { recursive: true, force: true });
 mkdirSync(modelOutput, { recursive: true });
-const manifest = JSON.parse(assets.find(asset => asset.key === 'packageNotice').bytes);
+const nativeAssets = packageAssets('full', true);
+const manifest = JSON.parse(nativeAssets.find(asset => asset.key === 'packageNotice').bytes);
 const modelPaths = new Set([manifest.detector.path, ...Object.values(manifest.models).flatMap(model => Object.values(model).map(asset => asset.path))]);
 manifest.assets = Object.fromEntries(Object.entries(manifest.assets).filter(([path]) => modelPaths.has(path)));
-for (const asset of assets.filter(asset => modelPaths.has(asset.target))) {
+for (const asset of nativeAssets.filter(asset => modelPaths.has(asset.target))) {
   const path = resolve(modelOutput, asset.target);
   assert.ok(path.startsWith(modelOutput+sep));
   mkdirSync(dirname(path), { recursive: true });
