@@ -134,6 +134,15 @@ remains untested. Timing varies with hardware, document layout and machine load;
 CPU tier measurements can overlap. All 55 exported text pages and unchanged
 original first-page pixels are checked by the full-document harness.
 
+Two later fresh-browser checks of the unchanged laptop Balanced WebGPU build,
+with seven warm passes each, measured **6.35 and 4.37 pages/s**, both at
+**2.213% CER**. Earlier three-pass controls measured 9.97?10.58 pages/s.
+The artifact, browser version, settings, input and text/geometry/PDF hashes
+match. Both detection and inference timings increased; the cause of the
+between-session variability has not been isolated. Ten pages/s is an observed
+result, not an established sustained laptop rate.
+
+
 ## Develop and package
 
 With Node.js/npm installed:
