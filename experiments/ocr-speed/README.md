@@ -21,6 +21,39 @@ the same new weights with ordinary width inputs; browser GPU graphs use an
 equivalent external mask. Current measured figures belong to the README and
 release notes. The sections below preserve the experiments and their controls.
 
+## Queued GPU batch experiment
+
+The queued-recognition experiment submits another GPU batch while the previous
+batch's class IDs download, retaining at most two or four batch inputs. It keeps
+the released models, detection, rendering and CTC decoding. Build from an existing
+v0.2.4 full HTML with `node experiments/ocr-speed/build-queued-recognition.mjs 2`
+(or `4`). Outputs are `dist/runtime-speed-queued-2.html` and `-4.html`, with
+hash-bound build receipts. These are experimental builds; released defaults
+remain unchanged.
+
+Eight fresh-browser trials per candidate and machine use the order
+control/candidate/candidate/control/candidate/control/control/candidate, with
+three warm 55-page passes per trial. Each candidate has two paired comparisons
+in each order and twelve warm passes per configuration.
+
+| Browser GPU | Queued batches | Control pages/s | Candidate pages/s | Paired change | CER |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Intel UHD laptop | 2 | 5.82 | 6.59 | +11.1% | 2.213% |
+| Intel UHD laptop | 4 | 5.49 | 5.31 | -6.2% | 2.213% |
+| RTX 3080 Ti desktop | 2 | 16.83 | 18.29 | +8.1% | 2.302% |
+| RTX 3080 Ti desktop | 4 | 18.13 | 20.75 | +11.0% | 2.302% |
+
+Rates pool twelve warm whole-document passes; paired changes use the geometric
+mean of four neighboring candidate/control ratios. All four desktop pairs favor
+each candidate. The laptop two-batch pairs range from -6.6% to +32.2%, with three
+wins; the four-batch variant wins one of four. The smaller queue is the better
+cross-device candidate, but a dependable laptop improvement remains uncertain.
+Within each host, every trial retains exact text, positioned lines, exported PDF
+bytes, 156 model batches and 49,020,928 recognition pixels. Startup and export
+are excluded. These are browser WebGPU measurements, not native runtime speeds.
+Both HTML variants add 1,432 bytes to the 22.84 MB full package. Source checks
+include bounded retention, line order and cleanup after allocation/model failures.
+
 ## Smaller standalone editions
 
 Current source packages gzip-compressed assets lazily, with native decompression
