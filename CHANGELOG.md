@@ -20,15 +20,15 @@ The desktop sessions improve 6.31% and 4.17%; laptop sessions change -0.03%
 and +3.93%. A portable speedup is unproven. Text, line positions, inference
 work and exported PDFs remain identical within each host. Warm rates exclude
 startup, input opening and export. These are browser GPU figures, not native
-runtime measurements. See the [experiment guide](experiments/ocr-speed/README.md)
+runtime measurements. See the [experiment guide](https://github.com/eliziff/legal-browser-ocr/blob/main/experiments/ocr-speed/README.md)
 for all blocks, earlier screens and limitations.
 
 Validation includes 56 source tests, the queue's eleven Chromium/Firefox
 compatibility cases, Quality/Extreme full-document checks, and hash comparisons
 of repackaged code and model assets against the tested builds. The repackaged
 queue also passes four fresh Chromium cases: offline CPU, hosted WebGPU and
-CPU recovery from injected GPU initialization and execution failures. The native Windows
-executable/package and portable kernel build sources are unchanged from v0.2.4;
+CPU recovery from injected GPU initialization and execution failures. The native
+Windows executable/package and portable kernel build sources are unchanged from v0.2.4;
 the shared model archive retains the same weights. Firefox automation currently
 fails to create a blank page, so no new Firefox execution is claimed for this
 repackaging. Safari hardware remains untested.

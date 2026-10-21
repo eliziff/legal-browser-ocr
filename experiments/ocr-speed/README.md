@@ -100,8 +100,29 @@ Across the preceding six-width cases, original owned input/output buffers total
 These counts exclude runtime allocations, weights and classifier scratch. The
 stress speedup does not describe an ordinary page. Light buffer reuse alone also
 improves document-batch throughput in both sessions; packing slows that model.
-The next page tests therefore examine these configurations separately. Neither
-candidate is discarded or enabled by default from these component results.
+The page tests below therefore examine these configurations separately. Neither
+candidate is discarded from the combined light result.
+
+Two further browser sessions per configuration run 32 timed 55-page passes,
+sixteen per mode, in eight ABBA/BAAB blocks with opposite starting orders:
+
+| Laptop browser WebGPU | Control pages/s | Candidate pages/s | Matched change | Winning blocks | Control / candidate CER |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Balanced, reused buffers + packed weights | 9.50 | 10.10 | +6.3% | 8/8 | 2.213% / 2.216% |
+| Extreme, reused buffers, unpacked weights | 11.73 | 12.30 | +4.8% | 7/8 | 3.954% / 3.949% |
+
+Balanced session changes are +6.43% / +6.16%; Extreme changes +6.64% / +2.98%.
+Both retain stable per-mode outputs, exact raw detector geometry and inference
+work, with zero new timed GPU sessions. Balanced matches its earlier fused output.
+All 64 timed passes are retained; both
+modes pass full PDF text, original-pixel and reopening gates. These are full
+document configuration improvements on this laptop, not recognition-only or
+native rates. Other-device speed remains unmeasured, so both configurations
+remain candidates rather than standard defaults. Absolute rates should be read
+against their paired controls, given the earlier machine timing drift.
+Each configuration also passes four fresh Chromium cases: offline CPU, hosted
+GPU and CPU recovery after injected GPU initialization/execution failures. The
+light configuration's GPU and recovery cases explicitly select Extreme.
 
 The cascade runs the existing small recognizer first, reads emitted-character
 top-two margins on GPU, and reruns selected lines with the accurate recognizer.
