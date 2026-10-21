@@ -53,6 +53,9 @@ bytes, 156 model batches and 49,020,928 recognition pixels. Startup and export
 are excluded. These are browser WebGPU measurements, not native runtime speeds.
 Both HTML variants add 1,432 bytes to the 22.84 MB full package. Source checks
 include bounded retention, line order and cleanup after allocation/model failures.
+The two-batch HTML also passes eleven Chromium/Firefox offline, hosted, CPU,
+GPU and fallback cases. Quality and Extreme each pass an additional 55-page
+first/warm/export check with exact released text, positions and PDF bytes.
 
 ## Smaller standalone editions
 
