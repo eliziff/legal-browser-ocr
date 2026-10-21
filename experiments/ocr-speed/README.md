@@ -21,6 +21,119 @@ the same new weights with ordinary width inputs; browser GPU graphs use an
 equivalent external mask. Current measured figures belong to the README and
 release notes. The sections below preserve the experiments and their controls.
 
+## Classifier, detector and cascade follow-up
+
+The subsequent prototypes retain every alphabet class and remain separate from
+released defaults. Whole-page screens below are Balanced browser WebGPU on the
+Intel UHD laptop, using 55 pages and 145,475 human-gold characters. Comparisons
+switch modes inside a warmed browser, then repeat in a second browser with the
+starting order reversed. No desktop or native speed is measured in this follow-up.
+
+The stock detector is statically quantized using 24 training pages, with four
+development tensor checks. Signed/unsigned QDQ convolution variants run through
+the stock full ORT 1.22 WASM engine, with a matching float control. Their page CER
+improves from 2.213% to 1.923% / 2.016%, but their paired throughput decreases
+15.5% / 28.0%. Each has four timed passes per mode, one ABBA and one BAAB block.
+The signed candidate remains an accuracy/size tradeoff, not a demonstrated speed
+improvement. Its 251,566-byte detector does not establish a smaller whole package:
+this prototype includes comparison assets and a different CPU runtime inventory.
+
+The custom GPU classifier computes all 1,679 classes, reducing eight timesteps
+in registers and optionally partitioning classes across workgroups. The feature
+graph omits the final classifier, while the shader uses the same weights and
+rounds scores to FP16. Eight independent numeric/tie/margin checks pass. On 128
+development lines, splitting the original graph preserves IDs exactly; the custom
+classifier changes 11 of 16,448 timestep IDs on identical features. Full-page
+CER is 2.216% (three additional edits). Initial two-session speeds disagree
+(-3.0% / +15.1%). A further 48 timed passes, 24 per mode in twelve ABBA/BAAB
+blocks, measure 9.93 control versus 9.85 fused pages/s, or -0.7% matched change.
+The browser-session changes are -2.74% / +1.33%, with four winning blocks.
+This establishes no dependable laptop gain; the earlier apparent +5.7% screen
+does not hold up. Both high absolute rates belong to the matched confirmation,
+rather than an improvement caused by classifier fusion.
+
+Those timings belong to the frozen `runtime-frontier-head-measured.html`.
+The current `runtime-frontier-head.html` adds a CPU fallback selection guard;
+its GPU computation is unchanged, but it has not been timed again.
+
+A buffer-reuse follow-up runs two development sessions in opposite starting
+orders: eight ABBA/BAAB blocks and sixteen timed passes per mode/model. It
+removes all 512 per-batch workspace allocations per model, retaining 444,448
+bytes within a 16 MiB limit. Numeric, shrinking/growing batch and concurrent-call
+checks pass, and all 16,448 development IDs remain identical. Standard throughput
+changes +0.07% (session changes -0.8% / +0.9%); light changes -1.25% (+0.3% /
+-2.8%). This is no dependable speed gain. Reuse stays optional and off by default;
+these are prepared-line measurements, with no new page speed or CER claim.
+
+Packing the custom head's existing FP16 weights into `u32` pairs halves its
+weight buffer (standard: 859,648 to 429,824 bytes), while `unpack2x16float`
+feeds the same FP32 arithmetic. This uses [core WGSL packing operations](https://www.w3.org/TR/WGSL/#data-packing-builtin-functions). Thirty-two
+numeric/resource checks per session pass; packing changes none of the 16,448
+development IDs for either model. Prepared-line throughput improves 3.7% for
+standard and decreases 1.7% for light. Those tests use dynamic four-line batches;
+the page runtime uses captured sixteen-line batches.
+
+The packed standard prototype's initial 32 page passes suggest +3.6%. A further
+48 passes, 24 per mode in twelve ABBA/BAAB blocks, measure 9.68 control versus
+9.74 packed pages/s (+0.7%). Session changes disagree (-2.3% / +3.7%), with six
+winning blocks. CER remains 2.216%, and text/positions match the earlier fused
+head exactly; the released control scores 2.213%. No dependable page-speed gain
+is established. Weight-buffer savings refer to the custom head, not total GPU
+memory, the released native FP16 classifier or HTML package size. All completed
+passes are retained. Packed mode remains experimental; its separate HTML passes
+offline CPU, hosted GPU and both injected GPU-failure recovery cases in Chromium.
+
+Further tests use the actual sixteen-line captured sessions, GPU-resident inputs,
+the released eight-shape/256 MiB owned-buffer cap and two browser sessions in
+opposite orders. Four ABBA/BAAB blocks per comparison separate buffer reuse,
+weight packing and their combination. The combined standard head is flat against
+the released classifier on mixed-width document batches; padding to 2048/4096px
+improves recognition-component throughput by about 2-3%. Both recognizers gain
+about 25-28% on three-line partial batches. These are component measurements,
+excluding detection, input upload and PDF work, not new page-throughput figures.
+
+A seven-width padding stress test exceeds the original cache's buffer budget.
+The combined head is about 3.4 times faster for both recognizers: the original
+rebuilds captured sessions while the feature graph keeps the working set resident.
+Across the preceding six-width cases, original owned input/output buffers total
+251,789,312 bytes; the feature graph needs 35,790,848 standard or 26,877,952 light.
+These counts exclude runtime allocations, weights and classifier scratch. The
+stress speedup does not describe an ordinary page. Light buffer reuse alone also
+improves document-batch throughput in both sessions; packing slows that model.
+The next page tests therefore examine these configurations separately. Neither
+candidate is discarded or enabled by default from these component results.
+
+The cascade runs the existing small recognizer first, reads emitted-character
+top-two margins on GPU, and reruns selected lines with the accurate recognizer.
+Both model passes, packing, routing and decoding are charged. Its frozen gate
+uses only the existing 128-line ordinal development sample, not test transcripts.
+It retries 15/128 development lines and scores 1.653% CER versus the teacher's
+1.759%, with about 20% lower prepared-line elapsed time. On actual pages it
+retries 263/2,424 lines, measuring only +3.2% paired page throughput and **2.845%
+CER**, versus 2.213% control. All four page blocks favor it, but its accuracy
+tradeoff is unsuitable for Balanced. The small development sample does not
+predict page accuracy; calibration on more representative development crops is
+still needed. The prototype adds 3,802 HTML bytes and reuses both packaged models.
+
+A separate Pareto comparison against the existing Fast tier runs eight warm
+passes per mode in four ABBA/BAAB blocks. Fast measures 10.356 pages/s at 2.332%
+CER; the Balanced cascade measures 10.339 at 2.845%. The matched speed change is
+-0.1%, with opposite session changes (+2.5% / -2.7%). Fast offers equivalent
+throughput with better accuracy here, so this frozen cascade is not a new tier.
+
+The Conv/HardSwish candidate combines 31 detector pairs through a custom MLAS
+bias/activation epilogue. Its graph, patch and operator inventory are prepared;
+the runtime build is incomplete. No kernel parity, page speed or CER is claimed.
+All completed page variants pass repeated per-mode text/position stability and
+searchable-PDF text/pixel gates. The browser source suite passes 56 tests.
+The head prototype passes four Chromium cases: offline CPU, hosted GPU and
+injected GPU initialization/run failures falling back to CPU. Firefox automation
+fails before opening the app; Firefox and cascade portability remain unverified.
+The Firefox page-creation failure also reproduces on a blank page without OCR
+or an injected initialization script.
+Private receipts and build/preparation commands
+belong to the owning Beaver workspace's `experiments/ocr-candidate-screen`.
+
 ## Queued GPU batch experiment
 
 The queued-recognition experiment submits another GPU batch while the previous
@@ -28,10 +141,51 @@ batch's class IDs download, retaining at most two or four batch inputs. It keeps
 the released models, detection, rendering and CTC decoding. Build from an existing
 v0.2.4 full HTML with `node experiments/ocr-speed/build-queued-recognition.mjs 2`
 (or `4`). Outputs are `dist/runtime-speed-queued-2.html` and `-4.html`, with
-hash-bound build receipts. These are experimental builds; released defaults
-remain unchanged.
+hash-bound build receipts. v0.2.5 publishes the two-batch build separately as
+`legal-browser-ocr-gpu-queued.html`. Standard released defaults remain unchanged.
 
-Eight fresh-browser trials per candidate and machine use the order
+### Same-session follow-up
+
+The tighter two-batch comparison switches only the queue mode inside one warmed
+browser, retaining the same workers, models and captured sessions. Each of two
+browser sessions runs six alternating ABBA/BAAB blocks, with the second session
+reversing the starting order: 48 timed 55-page passes per machine, 24 per mode.
+Both modes receive untimed warmups. Worker counters verify that the requested
+path actually ran, with identical inference work and no new timed sessions.
+
+| Balanced browser WebGPU | Control pages/s | Two-batch queue pages/s | Matched change | Winning blocks | CER |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Intel UHD laptop | 6.93 | 7.06 | +1.9% | 7/12 | 2.213% |
+| RTX 3080 Ti desktop | 18.11 | 19.08 | +5.2% | 10/12 | 2.302% |
+
+Rates divide all timed pages by total elapsed time per mode. Matched changes
+use the geometric mean of twelve block ratios, comparing two passes per mode
+within each block. Laptop browser-session changes are -0.03% and +3.93%; its
+blocks range from -8.1% to +16.8%. This does **not** establish a dependable laptop
+gain, and supersedes the earlier +11.1% estimate below. Desktop sessions measure
++6.31% and +4.17%; its blocks range from -8.9% to +14.0%, with +7.06% for ABBA
+and +3.44% for BAAB. A modest desktop benefit is supported; a portable default
+speedup is not established. These repeats reduce launch differences and linear
+drift, but do not remove all short-term contention or establish other-device speed.
+
+Every timed pass retains exact released per-host text and line positions, 156
+model batches, 49,020,928 recognition pixels and zero new GPU sessions. Both
+sessions' exported PDFs also match released bytes. CER remains unchanged.
+These are whole-document browser GPU results, excluding startup, PDF opening,
+untimed warmups and export; native performance was not measured. The queue is
+published as an optional edition, with no standard-default change.
+
+Build the switchable measurement HTML with
+`node experiments/ocr-speed/build-queued-recognition.mjs toggle`. It adds 1,592
+bytes to the full package. The owning workspace's `release_benchmark.mjs` takes
+`OCR_BENCH_QUEUE_ORDER` with 24 comma-separated queue depths (0 or 2) and rounds
+`24`. Use `0,2,2,0,2,0,0,2` repeated three times for the forward session and its
+inverse for reverse. `compare_browser_interleaved.mjs` verifies both private
+receipts and reports all block/session/order results without discarding passes.
+
+### Earlier fresh-browser screen
+
+Eight fresh-browser trials per candidate and machine used the order
 control/candidate/candidate/control/candidate/control/control/candidate, with
 three warm 55-page passes per trial. Each candidate has two paired comparisons
 in each order and twelve warm passes per configuration.
@@ -46,8 +200,8 @@ in each order and twelve warm passes per configuration.
 Rates pool twelve warm whole-document passes; paired changes use the geometric
 mean of four neighboring candidate/control ratios. All four desktop pairs favor
 each candidate. The laptop two-batch pairs range from -6.6% to +32.2%, with three
-wins; the four-batch variant wins one of four. The smaller queue is the better
-cross-device candidate, but a dependable laptop improvement remains uncertain.
+wins; the four-batch variant wins one of four. This screen selected the smaller
+queue for the tighter follow-up above; its laptop gain estimate did not hold up.
 Within each host, every trial retains exact text, positioned lines, exported PDF
 bytes, 156 model batches and 49,020,928 recognition pixels. Startup and export
 are excluded. These are browser WebGPU measurements, not native runtime speeds.

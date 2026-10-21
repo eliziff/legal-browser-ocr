@@ -13,6 +13,7 @@ download a package from [Releases](https://github.com/eliziff/legal-browser-ocr/
 | --- | --- |
 | `legal-browser-ocr-runtime.tar.gz` | Serve the application and its local assets |
 | `legal-browser-ocr.html` | Open the self-contained CPU/WebGPU application, including offline |
+| `legal-browser-ocr-gpu-queued.html` | Optional two-batch GPU edition; modest desktop gain, mixed laptop results |
 | `legal-browser-ocr-cpu-compact.html` | Smaller CPU application with Quality, Balanced, Fast and Turbo |
 | `legal-browser-ocr-extreme-compact.html` | Smallest CPU application, Extreme only |
 | `legal-ocr-models.tar.gz` | Shared models, tier manifest, checksums and model terms for native readers |
@@ -29,6 +30,14 @@ Supported browsers automatically use WebGPU with FP16 when available. Add
 Measured worker overrides belong to individual benchmark configurations; the
 CPU defaults follow the browser's reported hardware concurrency.
 Automatic mode retries on CPU if GPU initialization or the GPU device fails.
+
+The optional queued edition overlaps inference with class-ID download. On the
+same-session 55-page comparison it improves desktop Balanced WebGPU throughput
+from 18.11 to 19.08 pages/s (+5.2% matched), with unchanged 2.302% CER. Laptop
+results are mixed (+1.9% overall, -0.03% / +3.93% between sessions), so the
+standard edition retains its existing execution policy. These are browser GPU
+measurements; see the [experiment details](experiments/ocr-speed/README.md).
+
 GPU recognition overlaps CPU line detection with GPU crop preparation and uses
 static command replay. Its shape cache retains at most eight shapes and 256 MiB
 of owned buffers, in addition to runtime resources and page textures. PDF parsing
