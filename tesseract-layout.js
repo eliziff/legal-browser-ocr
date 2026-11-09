@@ -1,15 +1,19 @@
+// Embedded assets are already absolute. Parsing their multi-megabyte data URLs again copies them on the UI thread.
+const absolute = path => typeof path === 'string' && (path.startsWith('data:') || path.startsWith('blob:'))
+  ? path : new URL(path, location.href).href;
+
 export class TesseractLayout {
   constructor({ workerPath = './tesseract-layout-worker.js', corePath = './dist/layout-core.mjs', wasmPath = './dist/layout-core.wasm', sourceResolution = 200, trim = false, psm = 3, binaryThreshold = 0, modelOptions } = {}) {
     this.worker = new Worker(workerPath);
-    this.corePath = new URL(corePath, location.href).href;
-    this.wasmPath = new URL(wasmPath, location.href).href;
+    this.corePath = absolute(corePath);
+    this.wasmPath = absolute(wasmPath);
     this.sourceResolution = sourceResolution;
     this.trim = trim;
     this.psm = psm;
     this.binaryThreshold = binaryThreshold;
-    this.modelOptions = modelOptions;
+    this.modelOptions = modelOptions && { ...modelOptions };
     if(modelOptions)for(const key of ['modelPath','configPath','runtimeMjs','runtimeWasm'])
-      modelOptions[key]=new URL(modelOptions[key],location.href).href;
+      this.modelOptions[key]=absolute(modelOptions[key]);
     this.nextId = 0;
     this.pending = new Map();
     this.closed = false;
