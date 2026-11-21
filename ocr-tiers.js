@@ -1,4 +1,4 @@
-export const DEFAULT_TIER = 'balanced';
+export const DEFAULT_TIER = 'quality';
 export const OCR_DPI = 144;
 export const ocrTiers = Object.freeze({
   quality: { label: 'Quality', model: 'standard', detectorSide: 1024 },
