@@ -37,7 +37,11 @@ and is ready to wire into the browser worker path.
 
 ## Recorded performance
 
-Baseline measured on an examined 55-page image-only legal PDF (145,475 normalized
+Dev recognition accuracy (`wise_a075`, WiSE-FT α=0.75 blend over stock Indra with the
+full 1,732-token charset): **2.69% CER**, **5.49% WER** (**1.39×** faster on CPU via
+native `IndraNative` at `8.24` vs `11.42 ms/line` ORT, `width=320`).
+
+Scanned PDF throughput baseline (55-page image-only legal PDF, 145,475 normalized
 characters, 144 dpi PDF.js render, warm three-pass medians excluding startup and PDF
 export; see [experiments/ocr-speed/README.md](experiments/ocr-speed/README.md)):
 
