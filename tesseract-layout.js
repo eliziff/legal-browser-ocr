@@ -12,8 +12,8 @@ export class TesseractLayout {
     this.psm = psm;
     this.binaryThreshold = binaryThreshold;
     this.modelOptions = modelOptions && { ...modelOptions };
-    if(modelOptions)for(const key of ['modelPath','configPath','runtimeMjs','runtimeWasm'])
-      this.modelOptions[key]=absolute(modelOptions[key]);
+    if(modelOptions)for(const key of ['modelPath','configPath','runtimeMjs','runtimeWasm','nativeWasmPath'])
+      if(modelOptions[key])this.modelOptions[key]=absolute(modelOptions[key]);
     this.nextId = 0;
     this.pending = new Map();
     this.closed = false;

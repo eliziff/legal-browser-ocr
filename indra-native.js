@@ -1,5 +1,24 @@
 import { decodeClassIds } from './recognizer.js';
 
+async function createHandle(wasmBytes, modelBytes, loadFnName) {
+  const { instance } = await WebAssembly.instantiate(wasmBytes);
+  const { memory, alloc, dealloc } = instance.exports;
+  const loadFn = instance.exports[loadFnName];
+  if (typeof loadFn !== 'function') throw new Error(`Missing Wasm export: ${loadFnName}`);
+  const len = modelBytes.byteLength;
+  const ptr = alloc(len);
+  try {
+    new Uint8Array(memory.buffer, ptr, len).set(
+      modelBytes instanceof Uint8Array ? modelBytes : new Uint8Array(modelBytes),
+    );
+    const handle = loadFn(ptr, len);
+    if (!handle) throw new Error(`Failed to load model via ${loadFnName}`);
+    return { instance, handle };
+  } finally {
+    dealloc(ptr, len);
+  }
+}
+
 /** Runs Indra CPU line recognition inside `indra-native.wasm` (SIMD128) without ORT padding. */
 export class IndraNativeRuntime {
   constructor(instance, handle) {
@@ -12,20 +31,8 @@ export class IndraNativeRuntime {
   }
 
   static async create(wasmBytes, modelBytes) {
-    const { instance } = await WebAssembly.instantiate(wasmBytes);
-    const { memory, alloc, dealloc, indra_load } = instance.exports;
-    const len = modelBytes.byteLength;
-    const ptr = alloc(len);
-    try {
-      new Uint8Array(memory.buffer, ptr, len).set(
-        modelBytes instanceof Uint8Array ? modelBytes : new Uint8Array(modelBytes),
-      );
-      const handle = indra_load(ptr, len);
-      if (!handle) throw new Error('Failed to load Indra model into indra-native.wasm');
-      return new IndraNativeRuntime(instance, handle);
-    } finally {
-      dealloc(ptr, len);
-    }
+    const { instance, handle } = await createHandle(wasmBytes, modelBytes, 'indra_load');
+    return new IndraNativeRuntime(instance, handle);
   }
 
   #ensureGray(needed) {
@@ -76,5 +83,60 @@ export class IndraNativeRuntime {
     if (this.idsPtr) dealloc(this.idsPtr, this.idsCap * 4);
     if (this.handle) indra_free(this.handle);
     this.grayPtr = this.idsPtr = this.handle = 0;
+  }
+}
+
+/** Runs the Indra FPN line-box detector inside `indra-native.wasm` (SIMD128) without ORT CPU overhead. */
+export class DetectorNativeRuntime {
+  constructor(instance, handle) {
+    this.instance = instance;
+    this.handle = handle;
+    this.inPtr = 0;
+    this.inCap = 0;
+    this.outPtr = 0;
+    this.outCap = 0;
+  }
+
+  static async create(wasmBytes, modelBytes) {
+    const { instance, handle } = await createHandle(wasmBytes, modelBytes, 'detector_load');
+    return new DetectorNativeRuntime(instance, handle);
+  }
+
+  #ensureIn(neededFloats) {
+    if (neededFloats <= this.inCap) return this.inPtr;
+    const { alloc, dealloc } = this.instance.exports;
+    if (this.inPtr) dealloc(this.inPtr, this.inCap * 4);
+    this.inCap = Math.max(neededFloats, 896 * 640);
+    this.inPtr = alloc(this.inCap * 4);
+    return this.inPtr;
+  }
+
+  #ensureOut(neededFloats) {
+    if (neededFloats <= this.outCap) return this.outPtr;
+    const { alloc, dealloc } = this.instance.exports;
+    if (this.outPtr) dealloc(this.outPtr, this.outCap * 4);
+    this.outCap = Math.max(neededFloats, 3 * 448 * 320);
+    this.outPtr = alloc(this.outCap * 4);
+    return this.outPtr;
+  }
+
+  detect(inputF32, height, width) {
+    const inLen = height * width;
+    const outLen = 3 * (height >> 1) * (width >> 1);
+    const inPtr = this.#ensureIn(inLen);
+    const outPtr = this.#ensureOut(outLen);
+    const { memory, detector_run } = this.instance.exports;
+    new Float32Array(memory.buffer, inPtr, inLen).set(inputF32.subarray(0, inLen));
+    const written = detector_run(this.handle, inPtr, height, width, outPtr);
+    if (!written) throw new Error(`detector_run failed for ${width}x${height}`);
+    return new Float32Array(memory.buffer, outPtr, written);
+  }
+
+  dispose() {
+    const { dealloc, detector_free } = this.instance.exports;
+    if (this.inPtr) dealloc(this.inPtr, this.inCap * 4);
+    if (this.outPtr) dealloc(this.outPtr, this.outCap * 4);
+    if (this.handle) detector_free(this.handle);
+    this.inPtr = this.outPtr = this.handle = 0;
   }
 }

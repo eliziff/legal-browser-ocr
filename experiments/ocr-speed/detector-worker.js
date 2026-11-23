@@ -1,17 +1,29 @@
 import * as wasm from 'onnxruntime-web/wasm';
 import { decodeIndra, decodePaddle, xycut } from './detector-post.js';
+import { DetectorNativeRuntime } from '../../indra-native.js';
 
 let ready;
 let ort=wasm;
 async function load(options) {
-  if(options.executionProvider==='webgpu'){ort=await import('onnxruntime-web/webgpu');ort.env.webgpu.powerPreference='high-performance';}
-  ort.env.wasm.wasmPaths = { mjs: options.runtimeMjs, wasm: options.runtimeWasm };
-  ort.env.wasm.numThreads = 1;
   const configResponse = await fetch(options.configPath), modelResponse = await fetch(options.modelPath);
   if (!configResponse.ok || !modelResponse.ok) throw new Error('Detector assets are missing. Open the detectors package.');
   const config = (await configResponse.json())[options.backend];
   if(options.limitType)config.limitType=options.limitType;
-  const session = await ort.InferenceSession.create(await modelResponse.arrayBuffer(), { executionProviders: [options.executionProvider||'wasm'], graphOptimizationLevel: 'all', ...options.sessionOptions });
+  const modelBytes = await modelResponse.arrayBuffer();
+  if (options.backend === 'indra' && options.executionProvider !== 'webgpu') {
+    let wasmBytes = options.nativeWasm;
+    if (!wasmBytes && options.nativeWasmPath) {
+      const wasmResponse = await fetch(options.nativeWasmPath).catch(() => undefined);
+      if (wasmResponse?.ok) wasmBytes = await wasmResponse.arrayBuffer();
+    }
+    if (wasmBytes) {
+      return { config, native: await DetectorNativeRuntime.create(wasmBytes, modelBytes) };
+    }
+  }
+  if(options.executionProvider==='webgpu'){ort=await import('onnxruntime-web/webgpu');ort.env.webgpu.powerPreference='high-performance';}
+  ort.env.wasm.wasmPaths = { mjs: options.runtimeMjs, wasm: options.runtimeWasm };
+  ort.env.wasm.numThreads = 1;
+  const session = await ort.InferenceSession.create(modelBytes, { executionProviders: [options.executionProvider||'wasm'], graphOptimizationLevel: 'all', ...options.sessionOptions });
   return { config, session };
 }
 
@@ -45,14 +57,22 @@ self.onmessage = async ({ data: { id, bitmap, pixels, width, height, modelOption
   let source;
   try {
     ready ||= load(modelOptions);
-    const loaded = await ready, session = loaded.session, config = {...loaded.config}, started = performance.now();
+    const loaded = await ready, config = {...loaded.config}, started = performance.now();
     if(modelOptions.longSide)config[modelOptions.backend==='indra'?'longSide':'limitSide']=modelOptions.longSide;
     if (!bitmap) { source = new OffscreenCanvas(width, height); source.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(pixels), width, height), 0, 0); }
     const prepared = input(bitmap || source, width, height, modelOptions.backend, config), detectionStarted = performance.now();
-    const output = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', prepared.data, prepared.dims) });
-    const tensor = output[session.outputNames[0]], [h, w] = tensor.dims.slice(-2), postStarted = performance.now();
-    const boxes = modelOptions.backend === 'indra' ? decodeIndra(tensor.data, w, h) : decodePaddle(tensor.data, w, h, config);
-    for(const value of Object.values(output))value.dispose();
+    let h, w, data, output;
+    if (loaded.native) {
+      h = prepared.dims[2] >> 1; w = prepared.dims[3] >> 1;
+      data = loaded.native.detect(prepared.data, prepared.dims[2], prepared.dims[3]);
+    } else {
+      output = await loaded.session.run({ [loaded.session.inputNames[0]]: new ort.Tensor('float32', prepared.data, prepared.dims) });
+      const tensor = output[loaded.session.outputNames[0]];
+      [h, w] = tensor.dims.slice(-2); data = tensor.data;
+    }
+    const postStarted = performance.now();
+    const boxes = modelOptions.backend === 'indra' ? decodeIndra(data, w, h) : decodePaddle(data, w, h, config);
+    if (output) for(const value of Object.values(output))value.dispose();
     const sx = modelOptions.backend === 'indra' ? 1 / prepared.scale : width / w, sy = modelOptions.backend === 'indra' ? 1 / prepared.scale : height / h;
     const lines = boxes.map(box => ({ x0: Math.max(0, box.x0 * sx), y0: Math.max(0, box.y0 * sy), x1: Math.min(width, box.x1 * sx), y1: Math.min(height, box.y1 * sy) })).filter(box => box.x1 > box.x0 && box.y1 > box.y0);
     self.postMessage({ id, lines: xycut(lines), ...(profile && { timing: { layout_prepare_seconds: (detectionStarted - started) / 1000, layout_model_seconds: (postStarted - detectionStarted) / 1000, layout_post_seconds: (performance.now() - postStarted) / 1000, layout_detect_seconds: (performance.now() - detectionStarted) / 1000 } }) });

@@ -118,7 +118,7 @@ const layoutOptions={sourceResolution:Math.round(200*layoutScale),trim:trimLayou
 if(detector){
   layoutOptions.workerPath=await assetUrl('detectorWorker','./dist/detector-worker.js');
   const layoutRuntime = layoutExecutionProvider === 'webgpu' ? gpuRuntimePaths : runtimePaths;
-  layoutOptions.modelOptions={backend:detector,executionProvider:layoutExecutionProvider,modelPath:await assetUrl(`${detector}Detector`,`./assets/detectors/${detector}/model.onnx`,'application/octet-stream'),configPath:await assetUrl('detectorConfig','./assets/detectors/config.json','application/json'),runtimeMjs:layoutRuntime.mjs,runtimeWasm:layoutRuntime.wasm,longSide:Number(experimental.get('detectorSide'))||tier.detectorSide,limitType:detectorLimit||undefined,sessionOptions};
+  layoutOptions.modelOptions={backend:detector,executionProvider:layoutExecutionProvider,modelPath:await assetUrl(`${detector}Detector`,`./assets/detectors/${detector}/model.onnx`,'application/octet-stream'),configPath:await assetUrl('detectorConfig','./assets/detectors/config.json','application/json'),runtimeMjs:layoutRuntime.mjs,runtimeWasm:layoutRuntime.wasm,nativeWasmPath:detector==='indra'&&layoutExecutionProvider!=='webgpu'?await assetUrl('indraNativeWasm','./dist/indra-native.wasm','application/wasm'):undefined,longSide:Number(experimental.get('detectorSide'))||tier.detectorSide,limitType:detectorLimit||undefined,sessionOptions};
   $('segmentation').querySelector('[value="tesseract"]').textContent=detector==='indra'?'Indra line detection':'Paddle line detection';
 } else {
   layoutOptions.workerPath=await assetUrl('layoutWorker','./tesseract-layout-worker.js');
