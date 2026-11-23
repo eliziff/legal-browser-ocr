@@ -27,6 +27,18 @@ async function load(options) {
   return { config, session };
 }
 
+let workCanvas, workContext, workData;
+function ensureCanvas(w, h) {
+  if (!workCanvas) {
+    workCanvas = new OffscreenCanvas(w, h);
+    workContext = workCanvas.getContext('2d', { willReadFrequently: true });
+  } else if (workCanvas.width !== w || workCanvas.height !== h) {
+    workCanvas.width = w;
+    workCanvas.height = h;
+  }
+  return workContext;
+}
+
 function input(bitmap, width, height, backend, config) {
   let scale = backend === 'indra' ? config.longSide / Math.max(width, height) : config.limitType==='max'?Math.min(1,config.limitSide/Math.max(width,height)):Math.max(1, config.limitSide / Math.min(width, height));
   if (backend === 'paddle') scale = Math.min(scale, config.maxSide / Math.max(width, height));
@@ -34,22 +46,26 @@ function input(bitmap, width, height, backend, config) {
   const inputWidth = backend === 'indra' ? Math.ceil(resizedWidth / 32) * 32 : Math.max(32, Math.round(resizedWidth / 32) * 32);
   const inputHeight = backend === 'indra' ? Math.ceil(resizedHeight / 32) * 32 : Math.max(32, Math.round(resizedHeight / 32) * 32);
   if (backend === 'paddle') { resizedWidth = inputWidth; resizedHeight = inputHeight; }
-  const canvas = new OffscreenCanvas(inputWidth, inputHeight), context = canvas.getContext('2d', { willReadFrequently: true });
+  const context = ensureCanvas(inputWidth, inputHeight);
   context.fillStyle = 'white'; context.fillRect(0, 0, inputWidth, inputHeight);
   context.imageSmoothingQuality = backend === 'indra' ? 'high' : 'low';
   context.drawImage(bitmap, 0, 0, width, height, 0, 0, resizedWidth, resizedHeight);
   const rgba = context.getImageData(0, 0, inputWidth, inputHeight).data, plane = inputWidth * inputHeight;
-  const channels = backend === 'indra' ? 1 : 3, data = new Float32Array(plane * channels);
+  const channels = backend === 'indra' ? 1 : 3, needed = plane * channels;
+  const data = workData && workData.length >= needed ? workData.subarray(0, needed) : (workData = new Float32Array(needed));
   if (backend === 'indra') {
-    for (let y = 0; y < resizedHeight; y++) for (let x = 0; x < resizedWidth; x++) {
-      const index = y * inputWidth + x, offset = index * 4;
-      data[index] = 1 - Math.round(rgba[offset] * .299 + rgba[offset + 1] * .587 + rgba[offset + 2] * .114) / 255;
+    data.fill(0);
+    const inv255 = 1 / 255;
+    for (let y = 0; y < resizedHeight; y++) {
+      let index = y * inputWidth, offset = index * 4;
+      for (let x = 0; x < resizedWidth; x++, index++, offset += 4) {
+        data[index] = 1 - ((rgba[offset] * 77 + rgba[offset + 1] * 150 + rgba[offset + 2] * 29 + 128) >> 8) * inv255;
+      }
     }
   } else {
     const mean = [.485, .456, .406], std = [.229, .224, .225];
     for (let c = 0; c < 3; c++) for (let i = 0; i < plane; i++) data[c * plane + i] = (rgba[i * 4 + 2 - c] / 255 - mean[c]) / std[c];
   }
-  canvas.width = canvas.height = 1;
   return { data, dims: [1, channels, inputHeight, inputWidth], scale, inputWidth, inputHeight };
 }
 
