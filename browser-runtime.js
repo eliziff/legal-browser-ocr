@@ -28,8 +28,9 @@ export function createBrowserOcr(assets) {
     const cpu = { mjs: 'ortMjs', wasm: 'ortWasm' }, gpu = { mjs: 'gpuMjs', wasm: 'gpuWasm' };
     const paths = backend === 'webgpu' ? gpu : cpu;
     const loadRuntime = async paths => ({ mjs: await assets.url(paths.mjs), wasm: await assets.url(paths.wasm) });
-    const [model, codec, workerUrl, detectorUrl, detectorModel, detectorConfig, runtime, layoutRuntime, preparationUrl] = await Promise.all([
+    const [model, codec, indraWasm, workerUrl, detectorUrl, detectorModel, detectorConfig, runtime, layoutRuntime, preparationUrl] = await Promise.all([
       assets.bytes(backend === 'webgpu' ? pack.gpu : pack.cpu), assets.bytes(pack.codec),
+      assets.bytes('indraNativeWasm').catch(() => undefined),
       assets.url('recognitionWorker'), assets.url('detectorWorker'), assets.url('indraDetector'), assets.url('detectorConfig'),
       loadRuntime(paths), loadRuntime(configuration.layoutBackend === 'webgpu' ? gpu : cpu),
       configuration.prepareWorker ? assets.url('preparationWorker') : undefined,
@@ -40,12 +41,12 @@ export function createBrowserOcr(assets) {
       modelPath: detectorModel, configPath: detectorConfig, runtimeMjs: layoutRuntime.mjs,
       runtimeWasm: layoutRuntime.wasm, sessionOptions: configuration.sessionOptions,
     } }, configuration.layoutWorkerCount);
-    const settings = { workerUrl, preparationUrl, runtime, model,
+    const settings = { workerUrl, preparationUrl, runtime, model, indraWasm,
       codec: JSON.parse(new TextDecoder().decode(codec)), options: { ...configuration, recognizer: 'indra' } };
     recognition = createRecognitionPool({ ...settings, ...(backend === 'webgpu' && { fallback: async () => {
       const model = await assets.bytes(pack.cpu);
       configuration = { backend: 'wasm', tier: DEFAULT_TIER, ...runtimeDefaults('wasm') };
-      return { ...settings, model, runtime: layoutRuntime, preparationUrl: undefined,
+      return { ...settings, model, indraWasm, runtime: layoutRuntime, preparationUrl: undefined,
         options: { ...configuration, recognizer: 'indra' } };
     } }) });
     await recognition.ready; quiet();

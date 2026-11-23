@@ -69,7 +69,7 @@ export function createRecognitionPool({ fallback, ...settings }) {
   };
 }
 
-function createWorkerPool({ workerUrl, preparationUrl, runtime, model, codec, options }) {
+function createWorkerPool({ workerUrl, preparationUrl, runtime, model, codec, indraWasm, options }) {
   const { workerPoolSize, pageBatch, batchSize, bucketSize, sortedBatches, sessionOptions,
     backend, recognizer, widthMultiple, workerThreads, gpuArgMax, captureMode, captureEnabled, gpuCacheShapes, gpuPrep, gpuDirect, collectTimings } = options;
   const slots = [], idle = [], queue = [], prepared = new Map();
@@ -123,9 +123,11 @@ function createWorkerPool({ workerUrl, preparationUrl, runtime, model, codec, op
       };
       worker.onerror = event => dispose(new Error(event.message || 'Recognition worker failed'));
       const copy = model.slice();
+      const wasmCopy = indraWasm ? new Uint8Array(indraWasm).slice() : undefined;
+      const transfers = wasmCopy ? [copy.buffer, wasmCopy.buffer] : [copy.buffer];
       worker.postMessage({ type: 'init', backend, captureMode, captureEnabled, gpuCacheShapes, gpuPrep, gpuDirect, workerThreads, runtimeMjs: runtime.mjs,
-        runtimeWasm: runtime.wasm, model: copy, codec, recognizer, widthMultiple, gpuArgMax, timing: collectTimings,
-        batchSize, bucketSize, sortedBatches, sessionOptions }, [copy.buffer]);
+        runtimeWasm: runtime.wasm, indraWasm: wasmCopy, model: copy, codec, recognizer, widthMultiple, gpuArgMax, timing: collectTimings,
+        batchSize, bucketSize, sortedBatches, sessionOptions }, transfers);
     })),
     ...(preparationUrl ? [new Promise((resolve, reject) => {
       preparation = new Worker(preparationUrl); prepared.set(0, { reject });

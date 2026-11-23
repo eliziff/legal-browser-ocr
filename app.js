@@ -138,9 +138,12 @@ async function loadRecognizer() {
   if (session) await session.release();
   session=sessionPromise=lineRecognizer=undefined;
   const pack = modelPacks[tier.model];
-  const [codec, model] = await Promise.all([
+  const [codec, model, indraWasm] = await Promise.all([
     assetBytes(pack.codec, './'+pack.codec).then(bytes=>JSON.parse(new TextDecoder().decode(bytes))),
     assetBytes(pack.cpu, modelPath || './'+pack.cpu),
+    recognizer.id === 'indra'
+      ? assetBytes('indraNativeWasm', './dist/indra-native.wasm').then(bytes => new Uint8Array(bytes)).catch(() => undefined)
+      : undefined,
     layoutReady,
   ]);
   modelBytes = model;
@@ -150,11 +153,11 @@ async function loadRecognizer() {
     const settings = {
       workerUrl: await assetUrl('recognitionWorker', './dist/recognition-worker.js'),
       preparationUrl: prepareWorker ? await assetUrl('preparationWorker', './dist/preparation-worker.js') : undefined,
-      runtime: backend === 'webgpu' ? gpuRuntimePaths : runtimePaths, model: new Uint8Array(workerModel), codec,
+      runtime: backend === 'webgpu' ? gpuRuntimePaths : runtimePaths, model: new Uint8Array(workerModel), codec, indraWasm,
       options: { backend, workerPoolSize, pageBatch, batchSize, bucketSize, sortedBatches, sessionOptions,
         recognizer: recognizer.id, widthMultiple: recognizer.widthMultiple, workerThreads: backend === 'wasm' ? threadCount : 1, gpuArgMax, captureMode, captureEnabled, gpuCacheShapes, gpuPrep, gpuDirect, collectTimings },
     };
-    const cpu = () => ({ ...settings, preparationUrl: undefined, runtime: runtimePaths, model: new Uint8Array(model),
+    const cpu = () => ({ ...settings, preparationUrl: undefined, runtime: runtimePaths, model: new Uint8Array(model), indraWasm,
       options: { ...runtimeDefaults('wasm'), backend: 'wasm', recognizer: recognizer.id, widthMultiple: 8,
         gpuArgMax: 0, captureMode: false, gpuPrep: false, gpuDirect: false, collectTimings, sessionOptions } });
     recognitionPool = createRecognitionPool(cpuFallback ? cpu() : { ...settings,

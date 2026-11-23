@@ -4,6 +4,7 @@ import { ocrModels, ocrTier } from './ocr-tiers.js';
 export const runtimeAssetPaths = Object.freeze({
   ortMjs: 'dist/ort-wasm-simd-threaded.mjs', ortWasm: 'dist/ort-wasm-simd-threaded.wasm',
   gpuMjs: 'dist/ort-wasm-simd-threaded.jsep.mjs', gpuWasm: 'dist/ort-wasm-simd-threaded.jsep.wasm',
+  indraNativeWasm: 'dist/indra-native.wasm',
   pdfWorker: 'dist/pdf.worker.min.mjs', recognitionWorker: 'dist/recognition-worker.js',
   preparationWorker: 'dist/preparation-worker.js', detectorWorker: 'dist/detector-worker.js',
   layoutWorker: 'tesseract-layout-worker.js', layoutCore: 'assets/layout-core.mjs', layoutWasm: 'assets/layout-core.wasm',
@@ -13,6 +14,6 @@ export const runtimeAssetPaths = Object.freeze({
 
 /** Assets required by the embedding API's default recognition path. */
 export const embeddingAssetPaths = Object.freeze(Object.fromEntries([
-  'ortMjs', 'ortWasm', 'gpuMjs', 'gpuWasm', 'recognitionWorker', 'preparationWorker',
+  'ortMjs', 'ortWasm', 'gpuMjs', 'gpuWasm', 'indraNativeWasm', 'recognitionWorker', 'preparationWorker',
   'detectorWorker', 'detectorConfig', 'indraDetector', ...Object.values(ocrModels[ocrTier().model]),
 ].map(name => [name, runtimeAssetPaths[name]])));

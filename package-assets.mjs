@@ -17,6 +17,7 @@ export function packageAssets(variant = 'full', native = false) {
   const omitted = new Set(gpuEnabled ? [] : ['gpuMjs', 'gpuWasm', 'layoutWorker', 'layoutCore', 'layoutWasm', 'preparationWorker']);
   const sources = { ortMjs: 'assets/indra-kernels/hswish/ort-wasm-simd-threaded.mjs',
     ortWasm: 'assets/indra-kernels/hswish/ort-wasm-simd-threaded.wasm',
+    indraNativeWasm: 'indra-native.wasm',
     gpuMjs: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs',
     gpuWasm: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm' };
   const files = [...Object.entries(runtimeAssetPaths).filter(([key]) => !omitted.has(key) && !modelKeys.has(key)), ...[...selectedKeys].map(path => [path, path])]

@@ -82,13 +82,13 @@ export function decodeClassIds(output, n, validSteps, labels) {
 // The trained exports take NCHW images and unpadded widths, and return NTC logits.
 // Keep this preparation and decoding identical in the main thread and workers.
 export class LineRecognizer {
-  constructor(ort, session, profile, labels) {
-    Object.assign(this, { ort, session, profile, labels });
+  constructor(ort, session, profile, labels, nativeRuntime = null) {
+    Object.assign(this, { ort, session, profile, labels, nativeRuntime });
     this.canvas = new OffscreenCanvas(1, 1);
     this.context = this.canvas.getContext('2d', { willReadFrequently: true });
     this.resized = new OffscreenCanvas(1, 1);
     this.resizeContext = this.resized.getContext('2d', { willReadFrequently: true });
-    if(profile.gpuArgMax)this.argmax=new GpuArgMax(ort.env.webgpu.device,profile.gpuArgMax);
+    if(profile.gpuArgMax&&ort)this.argmax=new GpuArgMax(ort.env.webgpu.device,profile.gpuArgMax);
   }
 
   prepare(line, scale, timing) {
@@ -150,6 +150,9 @@ export class LineRecognizer {
   }
 
   async recognizePrepared(lines, { batchSize = this.profile.batchSize, bucketSize = 24, sortedBatches = false, confidence = false, timing } = {}) {
+    if (this.nativeRuntime && !confidence) {
+      return this.nativeRuntime.recognizePrepared(lines, this.labels, { timing });
+    }
     let started=timing?performance.now():0;
     const prepared = lines.map((line,index)=>({...line,index})), groups = new Map(), results = new Array(lines.length);
     if (sortedBatches) groups.set(0, prepared.sort((a, b) => a.width - b.width));
